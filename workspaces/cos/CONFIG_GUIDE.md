@@ -72,6 +72,11 @@
 | `ops` | 8h | 风险告警、数据新鲜度、live 变更是否都走审核 |
 | `ko` | 48h | 是否有高 signal closeout 未沉淀 |
 
+说明：
+
+- OpenClaw 官方文档明确说明：只要任一 agent 配了 `heartbeat`，就只会对带 `heartbeat` 的 agent 运行心跳。
+- 因此量化团队里不要给 `builder / research` 默认开 heartbeat，否则容易产生无意义的主动轮询。
+
 ## bindings 路由原则
 
 - 一个角色一个主频道，避免混杂上下文
@@ -101,8 +106,9 @@
 ## 量化场景的关键配置建议
 
 ### `agentToAgent.maxPingPongTurns`
-- 推荐维持低值或 `0`
+- 推荐维持低值，默认 `2`
 - 原因：量化场景里状态需要显式留痕，不要让自动 ping-pong 代替真实的 thread 记录
+- 若你的模型经常在 A2A 中自循环，可直接降到 `0`
 
 ### `sessions.visibility`
 - 推荐 `all`
@@ -142,3 +148,18 @@
 - 让 Builder 直接接收用户生产指令
 - 跳过 `ops` 让 `cto` 或 `builder` 自行放行 live
 - 把实盘和仿真复用同一个凭证和状态存储
+
+## 与 OpenClaw 官方能力的对应关系
+
+以下能力已被当前设计直接采用：
+
+- `bindings` 路由：用来把不同频道稳定分配给不同 agent
+- 独立 workspace / agentDir：防止多 agent 之间的 session、认证和技能污染
+- `heartbeat`：只用于少数控制面 agent 的摘要巡检
+- `sessions_send`：主线 thread 协作
+- `sessions_spawn`：Research / KO 类非阻塞 worker
+
+参考官方文档：
+
+- Multi-Agent Routing: https://docs.openclaw.ai/multi-agent
+- Heartbeat: https://docs.openclaw.ai/gateway/heartbeat

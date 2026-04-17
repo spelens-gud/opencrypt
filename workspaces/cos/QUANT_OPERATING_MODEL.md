@@ -6,7 +6,15 @@
 
 - 前台有明确的研究、决策、实施、审核、复盘闭环
 - 中台有稳定的任务状态机、引用链和回滚纪律
-- 后台有 OpenClaw 友好的 session / thread / heartbeat / bindings 配置
+- 后台有 OpenClaw 友好的 `workspace / bindings / sessions / heartbeat` 配置
+
+核心判断标准不是“Agent 有没有分工”，而是：
+
+- 有没有阶段门禁
+- 有没有引用链
+- 有没有 owner
+- 有没有可验证产物
+- 有没有能被 Ops 否决的风控闸门
 
 ## 五层能力面
 
@@ -14,6 +22,7 @@
 - owner: `research`
 - 产物：交易所画像、因子对标、外部系统 benchmark、策略候选池
 - 输出格式：`结论 + 证据 + 系统映射 + 下一步`
+- 关键引用：`benchmark_ref / evidence_ref`
 
 ### 2. Portfolio Decision
 - owner: `cio`
@@ -80,6 +89,19 @@
 4. CTO / Builder 处理根因
 5. KO 写 scar
 
+## 阶段门禁（统一语言）
+
+| 阶段 | owner | 必要产物 | 不满足时的阻塞原因 |
+|------|------|---------|------------------|
+| `research` | Research | benchmark、证据、可信度 | `missing_evidence` |
+| `decision` | CIO | `decision_ref` | `missing_decision_ref` |
+| `build` | CTO | 任务包、`rollback_ref` | `missing_rollback_ref` |
+| `validate` | Builder | `validation_report_ref` | `missing_validation_report` |
+| `ops_review` | Ops | `review_ref` | `missing_review_ref` |
+| `rollout` | CoS | rollout owner、观察窗口 | `missing_rollout_owner` |
+| `observe` | CoS + Ops | 健康摘要、异常路由 | `risk_gate_failed` |
+| `knowledge` | KO | `knowledge_ref` | `missing_knowledge_ref` |
+
 ## OpenClaw 里的路由规则
 
 ### 常驻主 Agent
@@ -96,6 +118,14 @@
 - `sessions_spawn`: 只用于 Research / KO 等边车型 worker
 - 每个任务一个 thread，不在频道主时间线里散落状态
 - 每个 `done` 条目必须能追溯到 `decision_ref / review_ref / rollback_ref`
+
+## OpenClaw 适配原则
+
+- 每个 agent 必须有独立 workspace 和独立 `agentDir`，不要复用认证与 session 目录
+- 入站消息由 `bindings` 路由到 agent，不靠频道名猜测 owner
+- 量化 heartbeat 只给 `cos / cio / cto / ops / ko`，`builder / research` 默认不跑 heartbeat
+- `heartbeat` 只发摘要，不把大段 JSON 审计日志直接灌进频道
+- `sessions_send` 用于主线 thread；`sessions_spawn` 用于不阻塞主线的 research / ko worker
 
 ## 量化任务的硬门槛
 
@@ -118,3 +148,4 @@
 - 不追求毫秒级做市撮合优化
 - 不做一次性全自动无人审核上线
 - 不把所有策略都塞进一个 agent 的上下文里
+- 不把 OpenClaw 退化成“一个频道一个模板角色”的展示系统

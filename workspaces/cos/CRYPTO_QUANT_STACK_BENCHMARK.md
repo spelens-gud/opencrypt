@@ -1,4 +1,4 @@
-# Crypto Quant Stack Benchmark (2026Q2)
+# Crypto Quant Stack Benchmark (Updated 2026-04-17)
 
 ## 目标
 
@@ -11,6 +11,18 @@
 - 是否能为 OpenClaw 的 thread + session 协作提供清晰分层
 
 ## 当前最值得对标的系统
+
+> 下面的“热度”优先参考 2026-04-17 当天官方 GitHub 仓库的可见 star 数、官方站点/文档成熟度、以及它是否真能映射到 OpenClaw 的多 Agent 职责链。
+
+| 系统 | 当前热度信号 | 更适合什么 | 我们借什么 | 不借什么 |
+|------|-------------|-----------|-----------|---------|
+| **Freqtrade** | GitHub `48.8k` stars；官方定位是开源 crypto trading bot | 中低频 CTA、回测、dry-run、参数迭代 | 回测/仿真基线、策略参数化、研究工作流 | 单进程包揽全栈 |
+| **LEAN** | GitHub `18.4k` stars；研究/回测/live 一致性成熟 | 研究到生产一致性、事件驱动状态机 | phase gate、broker/risk 分层、研究/生产 parity | 全资产全平台的大而全迁移 |
+| **Hummingbot** | GitHub `18.1k` stars；官方强调高频 crypto bot | 做市、套利、执行器、订单簿驱动 | connector/executor 抽象、执行器扩展、订单生命周期 | 让执行器直接越过治理闸门 |
+| **NautilusTrader** | GitHub `22.0k` stars；官方强调 deterministic event-driven | 工程化 live/backtest 一致性、强状态模型 | 订单状态机、适配器、审计边界 | 第一阶段就追求其复杂度 |
+| **Jesse** | GitHub `7.7k` stars；交易员友好 | 策略试错、回放、研究体验 | trader-friendly 策略接口、快速反馈 | 过度偏单策略开发体验 |
+| **OctoBot** | GitHub `5.7k` stars；官方强调简单界面 + 多交易所 | 产品化运营、控制台、模板化运行 | 控制台视角、操作路径、面向用户的监控组织 | 一体化 UI 驱动底层架构 |
+| **3Commas** | 商业平台；官方页面强调 DCA/Grid/Signal/SmartTrade 与控制台 | 面向终端用户的 bot 产品、运营编排 | dashboard、bot 模板、策略入口与管理体验 | 黑盒执行、SaaS 依赖 |
 
 ### 1. Freqtrade
 - 类型：开源、Python、偏中低频策略交易
@@ -86,7 +98,7 @@
 ### 7. 3Commas
 - 类型：商业化交易机器人平台
 - 为什么值得参考：
-  - 代表用户对“策略模板、自动化、信号接入、运营可视化”的真实需求
+  - 官方产品页强调 `DCA / Grid / Signal / SmartTrade`、回测和统一控制台，这代表真实市场对 bot 产品的入口预期
   - 更像产品层而不是底层引擎
 - 我们借什么：
   - 用户入口与运营编排思路
@@ -97,14 +109,19 @@
 
 ## 热度结论
 
-如果以 2026Q2 的“社区讨论度 + 官方文档成熟度 + GitHub / 产品活跃度 + 可复用性”综合判断：
+如果以 2026-04-17 的“GitHub 热度 + 官方文档成熟度 + 产品活跃度 + 对 OpenClaw 可映射性”综合判断：
 
 - **研究回测主线**：`Freqtrade`
 - **做市/套利执行主线**：`Hummingbot`
 - **架构参考主线**：`LEAN + NautilusTrader`
 - **产品化运营主线**：`OctoBot + 3Commas`
 
-最适合 OpenClaw 团队的不是“选一个系统全盘照抄”，而是做 **混合式参考架构**。
+最适合 OpenClaw 团队的不是“选一个系统全盘照抄”，而是做 **混合式参考架构**：
+
+- `Freqtrade` 负责研究回测方法论
+- `LEAN / NautilusTrader` 负责状态机和研究到生产一致性
+- `Hummingbot` 负责执行器和 connector 设计
+- `OctoBot / 3Commas` 负责控制台、运营与模板化体验
 
 ## OpenClaw 量化版目标架构
 
@@ -148,6 +165,15 @@
 - 自动巡检与异常路由
 - 策略目录与上线模板
 
+## 对这个仓库的直接改造要求
+
+基于以上 benchmark，这个仓库不应继续停留在“模板化角色描述”。它至少要具备：
+
+- 一套面向 `research -> decision -> build -> validate -> ops_review -> rollout -> observe -> knowledge` 的阶段门禁
+- 一套可追溯的引用链：`decision_ref / validation_report_ref / review_ref / rollback_ref / incident_ref / knowledge_ref`
+- 一套符合 OpenClaw 多智能体路由的工作区与 heartbeat 设计
+- 一套与量化系统真实模块对应的 `data / signal / portfolio / execution / risk / audit / observability` 边界
+
 ## 对 OpenClaw 团队的直接要求
 
 - CoS 负责控制塔，而不是直接下单
@@ -173,4 +199,4 @@
 - NautilusTrader: https://nautilustrader.io/docs/latest/ , https://github.com/nautechsystems/nautilus_trader
 - Jesse: https://docs.jesse.trade/ , https://github.com/jesse-ai/jesse
 - OctoBot: https://www.octobot.cloud/ , https://github.com/Drakkar-Software/OctoBot
-- 3Commas: https://3commas.io/
+- 3Commas: https://3commas.io/dca-bots/ , https://3commas.io/smart-trade
