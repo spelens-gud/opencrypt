@@ -1,0 +1,9 @@
+{
+  "environment": "paper",
+  "venue": "binance-paper",
+  "strategy": "trend_follow",
+  "risk_profile": "default-paper",
+  "data_latency_budget_ms": 1000,
+  "decision_ref_required": true,
+  "review_ref_required": false
+}

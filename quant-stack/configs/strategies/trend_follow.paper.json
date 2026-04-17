@@ -1,0 +1,8 @@
+{
+  "strategy_name": "trend_follow",
+  "symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+  "regime_scope": ["R1", "R2"],
+  "timeframe": "1h",
+  "entry_filter": "adx_and_breakout",
+  "exit_filter": "atr_trailing"
+}

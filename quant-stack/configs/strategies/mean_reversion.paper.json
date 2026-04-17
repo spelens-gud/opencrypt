@@ -1,0 +1,8 @@
+{
+  "strategy_name": "mean_reversion",
+  "symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+  "regime_scope": ["R3"],
+  "timeframe": "15m",
+  "entry_filter": "zscore_extreme",
+  "exit_filter": "mean_reclaim"
+}

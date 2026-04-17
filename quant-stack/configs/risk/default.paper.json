@@ -1,0 +1,7 @@
+{
+  "profile": "default-paper",
+  "max_gross_leverage": 1.2,
+  "per_trade_risk_bps": 45,
+  "daily_loss_limit_bps": 150,
+  "kill_switch_enabled": true
+}

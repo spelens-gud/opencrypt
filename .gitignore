@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.bak
+*.bak-*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets (never commit these)
+*.env
+secrets/
+credentials/
+
+# Local development (not part of the product)
+CLAUDE.md
+.claude/
+.harness/

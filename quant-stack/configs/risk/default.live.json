@@ -1,0 +1,7 @@
+{
+  "profile": "default-live",
+  "max_gross_leverage": 0.8,
+  "per_trade_risk_bps": 25,
+  "daily_loss_limit_bps": 100,
+  "kill_switch_enabled": true
+}

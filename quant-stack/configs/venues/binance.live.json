@@ -1,0 +1,7 @@
+{
+  "venue": "binance-live",
+  "execution_mode": "live",
+  "account_type": "futures-usdt",
+  "reconcile_interval_s": 3,
+  "max_order_retry": 2
+}

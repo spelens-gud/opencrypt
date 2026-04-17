@@ -1,0 +1,9 @@
+{
+  "environment": "live",
+  "venue": "binance-live",
+  "strategy": "trend_follow",
+  "risk_profile": "default-live",
+  "data_latency_budget_ms": 500,
+  "decision_ref_required": true,
+  "review_ref_required": true
+}

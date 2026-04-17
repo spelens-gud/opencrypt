@@ -1,0 +1,8 @@
+{
+  "venue": "binance-paper",
+  "execution_mode": "paper",
+  "account_type": "futures-usdt",
+  "proxy_url": "http://127.0.0.1:7897",
+  "reconcile_interval_s": 10,
+  "max_order_retry": 3
+}
