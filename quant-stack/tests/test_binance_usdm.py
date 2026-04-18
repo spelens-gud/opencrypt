@@ -10,6 +10,7 @@ from opencrew_quant.binance_usdm import (
     CcxtBinanceUsdmClient,
     create_ccxt_binance_exchange,
     run_binance_cycle,
+    run_binance_quote_loop,
     run_binance_reconcile_loop,
     report_binance_health,
     submit_binance_order,
@@ -35,6 +36,7 @@ class FakeExchange:
         self.demo_enabled = False
         self.loaded = False
         self.orders: list[dict[str, object]] = []
+        self.cancelled_orders: list[dict[str, object]] = []
         self.options: dict[str, object] = {}
 
     def set_sandbox_mode(self, enabled: bool) -> None:
@@ -92,14 +94,26 @@ class FakeExchange:
     ) -> dict[str, object]:
         order = {
             "id": f"fake-{len(self.orders) + 1}",
+            "clientOrderId": (params or {}).get("newClientOrderId", ""),
             "symbol": symbol,
             "type": order_type,
             "side": side,
             "amount": amount,
+            "price": price,
             "params": params or {},
         }
         self.orders.append(order)
         return order
+
+    def cancel_order(
+        self,
+        id: str,
+        symbol: str | None = None,
+        params: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        payload = {"id": id, "symbol": symbol or "", "params": params or {}}
+        self.cancelled_orders.append(payload)
+        return payload
 
     def fetch_balance(self, params: dict[str, object] | None = None) -> dict[str, object]:
         return {
@@ -398,6 +412,270 @@ class BinanceUsdmTest(unittest.TestCase):
         self.assertTrue(exchange.demo_enabled)
         self.assertEqual(exchange.orders[0]["type"], "market")
         self.assertEqual(exchange.orders[0]["side"], "buy")
+
+    def test_basis_carry_preview_cycle_emits_buy_and_sell_orders(self) -> None:
+        class BasisCarryExchange(FakeExchange):
+            def fetch_funding_rate(self, symbol: str) -> dict[str, object]:
+                if symbol == "BTC/USDT:USDT":
+                    return {"fundingRate": 0.0002, "markPrice": 66500.0}
+                return {"fundingRate": 0.0001, "markPrice": 3490.0}
+
+        client = CcxtBinanceUsdmClient(exchange=BasisCarryExchange(), order_mode="preview")
+        summary = run_binance_cycle(
+            ROOT,
+            decision_ref="DEC-BINANCE-BASIS-001",
+            strategy_file="basis_carry.paper.json",
+            order_mode="preview",
+            client=client,
+        )
+        sides = {order["symbol"]: order["side"] for order in summary.orders}
+        self.assertEqual(sides["BTC/USDT:USDT"], "sell")
+        self.assertEqual(sides["ETH/USDT:USDT"], "buy")
+        self.assertTrue(any(event["payload"].get("side") == "sell" for event in summary.audit_events))
+
+    def test_market_making_preview_cycle_emits_two_sided_limit_quotes(self) -> None:
+        class MarketMakingExchange(FakeExchange):
+            def fetch_ticker(self, symbol: str) -> dict[str, object]:
+                return {"symbol": symbol, "bid": 67986.0, "ask": 68014.0, "last": 68000.0, "info": {"latency": 120}}
+
+            def fetch_open_orders(
+                self,
+                symbol: str | None = None,
+                since: int | None = None,
+                limit: int | None = None,
+                params: dict[str, object] | None = None,
+            ) -> list[dict[str, object]]:
+                return []
+
+        client = CcxtBinanceUsdmClient(exchange=MarketMakingExchange(), order_mode="preview")
+        summary = run_binance_cycle(
+            ROOT,
+            decision_ref="DEC-BINANCE-MM-001",
+            strategy_file="market_making.paper.json",
+            order_mode="preview",
+            client=client,
+        )
+        self.assertEqual(len(summary.orders), 2)
+        self.assertTrue(all(order["order_type"] == "limit" for order in summary.orders))
+        self.assertTrue(all(order["post_only"] for order in summary.orders))
+        self.assertEqual({order["client_tag"] for order in summary.orders}, {"maker-bid", "maker-ask"})
+        self.assertTrue(any(event["event_type"] == "binance_preview_quote_order" for event in summary.audit_events))
+
+    def test_market_making_test_cycle_replaces_existing_quotes(self) -> None:
+        class ReplaceQuoteExchange(FakeExchange):
+            def fetch_ticker(self, symbol: str) -> dict[str, object]:
+                return {"symbol": symbol, "bid": 67982.0, "ask": 68028.0, "last": 68005.0, "info": {"latency": 140}}
+
+            def fetch_open_orders(
+                self,
+                symbol: str | None = None,
+                since: int | None = None,
+                limit: int | None = None,
+                params: dict[str, object] | None = None,
+            ) -> list[dict[str, object]]:
+                return [
+                    {
+                        "id": "open-bid-1",
+                        "clientOrderId": "maker-bid",
+                        "symbol": symbol or "BTC/USDT:USDT",
+                        "side": "buy",
+                        "type": "limit",
+                        "status": "open",
+                        "amount": 0.044,
+                        "remaining": 0.044,
+                        "price": 67995.0,
+                        "timestamp": 1776422110999,
+                        "info": {"reduceOnly": False, "postOnly": True, "timeInForce": "GTX", "clientOrderId": "maker-bid"},
+                    },
+                    {
+                        "id": "open-ask-1",
+                        "clientOrderId": "maker-ask",
+                        "symbol": symbol or "BTC/USDT:USDT",
+                        "side": "sell",
+                        "type": "limit",
+                        "status": "open",
+                        "amount": 0.046,
+                        "remaining": 0.046,
+                        "price": 68005.0,
+                        "timestamp": 1776422111000,
+                        "info": {"reduceOnly": False, "postOnly": True, "timeInForce": "GTX", "clientOrderId": "maker-ask"},
+                    },
+                ]
+
+        exchange = ReplaceQuoteExchange()
+        exchange.enable_demo_trading(True)
+        client = CcxtBinanceUsdmClient(exchange=exchange, order_mode="test")
+        summary = run_binance_cycle(
+            ROOT,
+            decision_ref="DEC-BINANCE-MM-002",
+            strategy_file="market_making.paper.json",
+            order_mode="test",
+            client=client,
+        )
+        self.assertEqual(len(exchange.cancelled_orders), 2)
+        self.assertEqual(len(exchange.orders), 2)
+        self.assertTrue(all(order["type"] == "limit" for order in exchange.orders))
+        self.assertTrue(all(order["params"].get("postOnly") for order in exchange.orders))
+        self.assertEqual({order["params"].get("newClientOrderId") for order in exchange.orders}, {"maker-bid", "maker-ask"})
+        self.assertTrue(all(item["action"] == "replace" for item in summary.orders))
+        self.assertTrue(any(event["event_type"] == "binance_test_quote_cancel" for event in summary.audit_events))
+
+    def test_market_making_test_cycle_cancels_quotes_on_stale_riskoff(self) -> None:
+        class StaleQuoteExchange(FakeExchange):
+            def fetch_ticker(self, symbol: str) -> dict[str, object]:
+                return {"symbol": symbol, "bid": 67990.0, "ask": 68050.0, "last": 68020.0, "info": {"latency": 900}}
+
+            def fetch_open_orders(
+                self,
+                symbol: str | None = None,
+                since: int | None = None,
+                limit: int | None = None,
+                params: dict[str, object] | None = None,
+            ) -> list[dict[str, object]]:
+                return [
+                    {
+                        "id": "open-bid-1",
+                        "clientOrderId": "maker-bid",
+                        "symbol": symbol or "BTC/USDT:USDT",
+                        "side": "buy",
+                        "type": "limit",
+                        "status": "open",
+                        "amount": 0.044,
+                        "remaining": 0.044,
+                        "price": 67979.2,
+                        "timestamp": 1776422110999,
+                        "info": {"reduceOnly": False, "postOnly": True, "timeInForce": "GTX", "clientOrderId": "maker-bid"},
+                    },
+                    {
+                        "id": "open-ask-1",
+                        "clientOrderId": "maker-ask",
+                        "symbol": symbol or "BTC/USDT:USDT",
+                        "side": "sell",
+                        "type": "limit",
+                        "status": "open",
+                        "amount": 0.044,
+                        "remaining": 0.044,
+                        "price": 68020.8,
+                        "timestamp": 1776422111000,
+                        "info": {"reduceOnly": False, "postOnly": True, "timeInForce": "GTX", "clientOrderId": "maker-ask"},
+                    },
+                ]
+
+        exchange = StaleQuoteExchange()
+        exchange.enable_demo_trading(True)
+        client = CcxtBinanceUsdmClient(exchange=exchange, order_mode="test")
+        summary = run_binance_cycle(
+            ROOT,
+            decision_ref="DEC-BINANCE-MM-003",
+            strategy_file="market_making.paper.json",
+            order_mode="test",
+            client=client,
+        )
+        self.assertEqual(summary.orders, [])
+        self.assertEqual(len(exchange.cancelled_orders), 2)
+        self.assertEqual(len(exchange.orders), 0)
+        self.assertTrue(any(alert["title"] == "stale-quote" for alert in summary.alerts))
+
+    def test_run_binance_quote_loop_preview_replaces_quotes_across_iterations(self) -> None:
+        class PreviewLoopExchange(FakeExchange):
+            def __init__(self) -> None:
+                super().__init__()
+                self.ticker_calls = 0
+
+            def fetch_ticker(self, symbol: str) -> dict[str, object]:
+                self.ticker_calls += 1
+                if self.ticker_calls == 1:
+                    return {"symbol": symbol, "bid": 67986.0, "ask": 68014.0, "last": 68000.0, "info": {"latency": 120}}
+                return {"symbol": symbol, "bid": 67982.0, "ask": 68028.0, "last": 68005.0, "info": {"latency": 140}}
+
+        client = CcxtBinanceUsdmClient(exchange=PreviewLoopExchange(), order_mode="preview")
+        sleeps: list[int] = []
+        summary = run_binance_quote_loop(
+            ROOT,
+            decision_ref="DEC-BINANCE-QUOTE-LOOP-001",
+            order_mode="preview",
+            iterations=2,
+            interval_s=1,
+            client=client,
+            sleeper=sleeps.append,
+        )
+        self.assertEqual(summary.iterations, 2)
+        self.assertEqual(len(summary.cycles), 2)
+        self.assertEqual(sleeps, [1])
+        self.assertTrue(all(cycle["ok"] for cycle in summary.cycles))
+        self.assertTrue(all(order["action"] == "place" for order in summary.cycles[0]["orders"]))
+        self.assertTrue(any(order["action"] == "replace" for order in summary.cycles[1]["orders"]))
+        self.assertTrue(any(order["action"] == "keep" for order in summary.cycles[1]["orders"]))
+        self.assertEqual(summary.cycles[0]["open_order_count"], 2)
+        self.assertEqual(summary.cycles[1]["open_order_count"], 2)
+
+    def test_run_binance_quote_loop_test_mode_cancels_on_riskoff(self) -> None:
+        class QuoteLoopStaleExchange(FakeExchange):
+            def __init__(self) -> None:
+                super().__init__()
+                self.ticker_calls = 0
+
+            def fetch_ticker(self, symbol: str) -> dict[str, object]:
+                self.ticker_calls += 1
+                if self.ticker_calls == 1:
+                    return {"symbol": symbol, "bid": 67986.0, "ask": 68014.0, "last": 68000.0, "info": {"latency": 120}}
+                return {"symbol": symbol, "bid": 67990.0, "ask": 68050.0, "last": 68020.0, "info": {"latency": 900}}
+
+            def fetch_open_orders(
+                self,
+                symbol: str | None = None,
+                since: int | None = None,
+                limit: int | None = None,
+                params: dict[str, object] | None = None,
+            ) -> list[dict[str, object]]:
+                if self.ticker_calls <= 1:
+                    return []
+                return [
+                    {
+                        "id": "open-bid-1",
+                        "clientOrderId": "maker-bid",
+                        "symbol": symbol or "BTC/USDT:USDT",
+                        "side": "buy",
+                        "type": "limit",
+                        "status": "open",
+                        "amount": 0.044,
+                        "remaining": 0.044,
+                        "price": 67979.2,
+                        "timestamp": 1776422110999,
+                        "info": {"reduceOnly": False, "postOnly": True, "timeInForce": "GTX", "clientOrderId": "maker-bid"},
+                    },
+                    {
+                        "id": "open-ask-1",
+                        "clientOrderId": "maker-ask",
+                        "symbol": symbol or "BTC/USDT:USDT",
+                        "side": "sell",
+                        "type": "limit",
+                        "status": "open",
+                        "amount": 0.044,
+                        "remaining": 0.044,
+                        "price": 68020.8,
+                        "timestamp": 1776422111000,
+                        "info": {"reduceOnly": False, "postOnly": True, "timeInForce": "GTX", "clientOrderId": "maker-ask"},
+                    },
+                ]
+
+        exchange = QuoteLoopStaleExchange()
+        exchange.enable_demo_trading(True)
+        client = CcxtBinanceUsdmClient(exchange=exchange, order_mode="test")
+        summary = run_binance_quote_loop(
+            ROOT,
+            decision_ref="DEC-BINANCE-QUOTE-LOOP-002",
+            order_mode="test",
+            iterations=2,
+            interval_s=0,
+            client=client,
+        )
+        self.assertEqual(len(summary.cycles), 2)
+        self.assertTrue(summary.cycles[0]["ok"])
+        self.assertFalse(summary.cycles[1]["ok"])
+        self.assertEqual(len(exchange.orders), 2)
+        self.assertEqual(len(exchange.cancelled_orders), 2)
+        self.assertTrue(any(alert["title"] == "quote-loop-alert" for alert in summary.alerts))
 
     def test_quantize_amount_uses_exchange_precision(self) -> None:
         client = CcxtBinanceUsdmClient(exchange=FakeExchange(), order_mode="preview")

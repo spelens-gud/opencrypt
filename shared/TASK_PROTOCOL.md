@@ -13,11 +13,15 @@
 - signal：0-3（是否需要KO/Ops复盘）
 
 量化任务额外强制字段：
+- strategy_lane：`directional_alpha | basis_carry | microstructure_mm | signal_relay | grid_dca`
 - decision_ref：策略或变更依据；没有则不得进入 build
 - risk_scope：影响 `data/signal/portfolio/execution/risk/audit/ops` 哪一层
 - rollback_ref：任何非只读改动都要有
+- validation_plan_ref：进入 validate 前必须明确
 - review_ref：涉及 live / 风控阈值 / 权限 / 路由变更时必填
 - validation_report_ref：涉及实现、参数、策略验证时必填
+- rollout_ref：进入 rollout 前必须明确 owner、观察窗口和回退条件
+- observe_ref：进入 observe 后必须有健康摘要或观察记录
 
 ## 2) 完成判定（Definition of Done）
 任务完成必须同时满足：
@@ -29,8 +33,11 @@
 阶段门槛：
 - `research`：结论 + 证据 + 可信度
 - `decision`：`decision_ref`
-- `build/validate`：`decision_ref + rollback_ref + validation_report_ref`
-- `ops_review/live`：`decision_ref + rollback_ref + review_ref`
+- `build`：`decision_ref + rollback_ref + validation_plan_ref`
+- `validate`：`decision_ref + rollback_ref + validation_plan_ref + validation_report_ref`
+- `ops_review/live`：`decision_ref + rollback_ref + validation_report_ref + review_ref`
+- `rollout`：`review_ref + rollout_ref`
+- `observe`：`observe_ref`
 - `done`：若涉及上线，还需 `knowledge_ref` 或 KO 沉淀记录
 
 ## 3) 何时写 Closeout
@@ -50,11 +57,12 @@
 Checkpoint的结果：
 - 刷新TASKS.md：把下一步明确化
 - 必要时：生成"子任务列表"，由主Agent spawn执行
-- 若是量化主线，同时更新当前 `stage` 与缺失引用（如 `missing_review_ref`）
+- 若是量化主线，同时更新当前 `stage` 与缺失引用（如 `missing_review_ref` / `missing_observe_ref`）
 
 ## 5) Spawn子任务
 当需要并行/隔离/非阻塞执行：
 - 用 SUBAGENT_PACKET_TEMPLATE.md 组装自包含任务包
 - subagent没有你的SOUL/USER/MEMORY，任务描述必须完整
 - 要求announce必须带：Status/Result/Notes
-- 量化任务下发前，主Agent必须先写清：`objective + stage + decision_ref + risk_scope + DoD + rollback_ref`
+- 量化任务下发前，主Agent必须先写清：`objective + stage + decision_ref + risk_scope + DoD + rollback_ref + validation_plan_ref`
+- 若属于 mainline，还必须写清 `strategy_lane`

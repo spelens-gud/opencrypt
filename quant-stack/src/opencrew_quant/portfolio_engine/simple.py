@@ -9,7 +9,7 @@ class FixedRiskPortfolioEngine:
         self._risk_limits = risk_limits
 
     def build_target(self, symbol: str, decision_weight: float, nav_usd: float) -> TargetAllocation:
-        capped_weight = min(max(decision_weight, 0.0), self._risk_limits.max_gross_leverage)
+        capped_weight = min(max(abs(decision_weight), 0.0), self._risk_limits.max_gross_leverage)
         return TargetAllocation(
             symbol=symbol,
             target_notional_usd=round(nav_usd * capped_weight, 2),

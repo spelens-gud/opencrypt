@@ -1,6 +1,7 @@
 # Decision Log: DEC-YYYY-MM-DD-XXX
 
 - decision_id: DEC-YYYY-MM-DD-XXX
+- strategy_lane: directional_alpha | basis_carry | microstructure_mm | signal_relay | grid_dca
 - related_change_id: (optional, from `ops/live-change-review.md`)
 - related_incident_id: (optional, from `ops/incident-template.md`)
 - timestamp:
@@ -24,6 +25,35 @@
 - threshold_hit:
 - event_context:
 - benchmark_alignment: (Freqtrade/Hummingbot/LEAN 哪类能力被采用或借鉴)
+- external_system_refs:
+- lane_rationale: (为什么这个任务属于该 lane，而不是其他 lane)
+
+## Lane-Specific Requirements
+
+### directional_alpha
+- alpha_hypothesis:
+- invalidation_signal:
+- max_concurrent_positions:
+
+### basis_carry
+- hedge_definition:
+- leg_mismatch_tolerance:
+- borrow_or_funding_assumption:
+
+### microstructure_mm
+- quoting_style:
+- inventory_cap:
+- stale_quote_abort_condition:
+
+### signal_relay
+- signal_source:
+- idempotency_rule:
+- reduce_only_rule:
+
+### grid_dca
+- bot_template:
+- capital_sleeve_limit:
+- stop_new_entries_condition:
 
 ## Outcome Review (T+1 / T+7)
 - pnl_24h:

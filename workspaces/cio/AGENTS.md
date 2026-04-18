@@ -24,11 +24,19 @@
 ## 输出规范
 
 任务完成时closeout必须包含：
+- `strategy_lane`
 - 决策/观点
 - 依据（数据/逻辑）
 - 风险提示（如有）
 - 需要用户决策的点（如有）
 - 若 `ops_required=yes`，必须附上 Ops 审核引用信息
+- 量化主线必须产出 `decision_ref`
+- 若建议进入 rollout，还要写明观察窗条件，供 CoS/Ops 转成 `rollout_ref / observe_ref`
+
+量化决策新增要求：
+- `directional_alpha`：明确 alpha 假设、失效条件、仓位上限
+- `basis_carry / microstructure_mm`：明确允许的库存/对冲偏差、撤单或 risk-off 触发器
+- `signal_relay / grid_dca`：明确 bot 模板、单 bot 资本上限、何时停新单
 
 ## 文件读取优先级（量化场景）
 

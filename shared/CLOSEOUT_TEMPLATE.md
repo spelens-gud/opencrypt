@@ -4,6 +4,7 @@
 - ID: [YYYYMMDD-序号]
 - Type: [A/P/S]
 - Owner: [agent_id]
+- Strategy Lane: [directional_alpha | basis_carry | microstructure_mm | signal_relay | grid_dca]
 - Stage: [research | decision | build | validate | ops_review | rollout | observe | knowledge]
 - Thread: [Slack thread 链接 / channel + thread id]
 
@@ -13,9 +14,12 @@
 
 ## Reference Chain（量化任务强制）
 - `decision_ref`:
+- `validation_plan_ref`:
 - `validation_report_ref`:
 - `review_ref`:
 - `rollback_ref`:
+- `rollout_ref`:
+- `observe_ref`:
 - `incident_ref`:
 - `knowledge_ref`:
 

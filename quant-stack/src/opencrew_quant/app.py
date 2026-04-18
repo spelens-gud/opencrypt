@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import load_stack_config
 from .binance_usdm import (
     run_binance_cycle,
+    run_binance_quote_loop,
     submit_binance_order,
     sync_binance_account,
     sync_binance_activity,
@@ -15,8 +16,30 @@ from .binance_usdm import (
     report_binance_health,
 )
 from .domain.models import Side
+from .operating_model import (
+    build_agent_operating_specs,
+    build_market_system_benchmarks,
+    build_openclaw_delivery_contract,
+    build_strategy_lane_specs,
+)
 from .paper_cycle import run_paper_cycle
-from .pipeline import STAGE_ORDER, describe_stage_gates
+from .paper_replay import run_market_making_replay
+from .pipeline import (
+    DELIVERY_STAGE_ORDER,
+    WORKFLOW_STAGE_ORDER,
+    describe_delivery_stage_gates,
+    describe_workflow_stage_gates,
+)
+
+
+STRATEGY_FILE_CHOICES = [
+    "trend_follow.paper.json",
+    "mean_reversion.paper.json",
+    "basis_carry.paper.json",
+    "market_making.paper.json",
+    "signal_router.paper.json",
+    "grid_dca.paper.json",
+]
 
 
 def build_system_blueprint() -> dict[str, list[str]]:
@@ -24,6 +47,7 @@ def build_system_blueprint() -> dict[str, list[str]]:
         "market_data": ["market-feed", "account-feed", "freshness-check"],
         "signal_engine": ["regime-router", "signal-engine", "parameter-store"],
         "portfolio_engine": ["allocation-engine", "position-targeting"],
+        "quote_engine": ["inventory-skew", "quote-planner", "quote-refresh-kill-switch"],
         "execution_gateway": ["venue-adapter", "order-manager", "reconcile-loop"],
         "risk_engine": ["pre-trade-checks", "loss-cap", "kill-switch"],
         "audit_log": ["order-log", "fill-log", "risk-snapshot-log"],
@@ -36,22 +60,39 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("blueprint")
+    subparsers.add_parser("operating-model")
+    subparsers.add_parser("openclaw-spec")
+    subparsers.add_parser("strategy-catalog")
 
     run_cycle = subparsers.add_parser("run-paper-cycle")
     run_cycle.add_argument("--decision-ref", required=True)
     run_cycle.add_argument(
         "--strategy-file",
         default="trend_follow.paper.json",
-        choices=["trend_follow.paper.json", "mean_reversion.paper.json"],
+        choices=STRATEGY_FILE_CHOICES,
     )
     run_cycle.add_argument("--nav-usd", type=float, default=100000.0)
+
+    replay_cycle = subparsers.add_parser("run-paper-replay")
+    replay_cycle.add_argument("--decision-ref", required=True)
+    replay_cycle.add_argument(
+        "--strategy-file",
+        default="market_making.paper.json",
+        choices=["market_making.paper.json"],
+    )
+    replay_cycle.add_argument(
+        "--scenario",
+        default="inventory_refresh",
+        choices=["inventory_refresh", "stale_riskoff"],
+    )
+    replay_cycle.add_argument("--nav-usd", type=float, default=100000.0)
 
     run_binance = subparsers.add_parser("run-binance-cycle")
     run_binance.add_argument("--decision-ref", required=True)
     run_binance.add_argument(
         "--strategy-file",
         default="trend_follow.paper.json",
-        choices=["trend_follow.paper.json", "mean_reversion.paper.json"],
+        choices=STRATEGY_FILE_CHOICES,
     )
     run_binance.add_argument("--nav-usd", type=float, default=100000.0)
     run_binance.add_argument(
@@ -59,6 +100,24 @@ def _build_parser() -> argparse.ArgumentParser:
         default="preview",
         choices=["preview", "test", "live"],
     )
+
+    quote_loop = subparsers.add_parser("run-binance-quote-loop")
+    quote_loop.add_argument("--decision-ref", required=True)
+    quote_loop.add_argument(
+        "--strategy-file",
+        default="market_making.paper.json",
+        choices=["market_making.paper.json"],
+    )
+    quote_loop.add_argument("--nav-usd", type=float, default=100000.0)
+    quote_loop.add_argument("--iterations", type=int, default=1)
+    quote_loop.add_argument("--interval-s", type=int)
+    quote_loop.add_argument("--max-consecutive-failures", type=int, default=3)
+    quote_loop.add_argument(
+        "--order-mode",
+        default="preview",
+        choices=["preview", "test", "live"],
+    )
+    quote_loop.add_argument("--audit-dir")
 
     submit_binance = subparsers.add_parser("submit-binance-order")
     submit_binance.add_argument("--decision-ref", required=True)
@@ -85,7 +144,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_activity.add_argument(
         "--strategy-file",
         default="trend_follow.paper.json",
-        choices=["trend_follow.paper.json", "mean_reversion.paper.json"],
+        choices=STRATEGY_FILE_CHOICES,
     )
     sync_activity.add_argument("--symbol")
     sync_activity.add_argument("--limit", type=int, default=20)
@@ -101,7 +160,7 @@ def _build_parser() -> argparse.ArgumentParser:
     reconcile_loop.add_argument(
         "--strategy-file",
         default="trend_follow.paper.json",
-        choices=["trend_follow.paper.json", "mean_reversion.paper.json"],
+        choices=STRATEGY_FILE_CHOICES,
     )
     reconcile_loop.add_argument("--symbol")
     reconcile_loop.add_argument("--limit", type=int, default=20)
@@ -131,9 +190,34 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in (None, "blueprint"):
         output = {
             "system": build_system_blueprint(),
-            "stage_order": STAGE_ORDER,
-            "stage_gates": describe_stage_gates(),
+            "workflow_stage_order": WORKFLOW_STAGE_ORDER,
+            "workflow_stage_gates": describe_workflow_stage_gates(),
+            "delivery_stage_order": DELIVERY_STAGE_ORDER,
+            "delivery_stage_gates": describe_delivery_stage_gates(),
             "sample_config": stack.to_dict(),
+        }
+    elif args.command == "operating-model":
+        output = {
+            "benchmarks": [item.to_dict() for item in build_market_system_benchmarks()],
+            "strategy_lanes": [item.to_dict() for item in build_strategy_lane_specs()],
+            "agents": [item.to_dict() for item in build_agent_operating_specs()],
+            "workflow_stage_order": WORKFLOW_STAGE_ORDER,
+            "workflow_stage_gates": describe_workflow_stage_gates(),
+            "delivery_stage_order": DELIVERY_STAGE_ORDER,
+            "delivery_stage_gates": describe_delivery_stage_gates(),
+            "openclaw_contract": build_openclaw_delivery_contract(),
+        }
+    elif args.command == "openclaw-spec":
+        output = {
+            "benchmarks": [item.to_dict() for item in build_market_system_benchmarks()],
+            "strategy_lanes": [item.to_dict() for item in build_strategy_lane_specs()],
+            "agents": [item.to_dict() for item in build_agent_operating_specs()],
+            "openclaw_contract": build_openclaw_delivery_contract(),
+        }
+    elif args.command == "strategy-catalog":
+        output = {
+            "benchmarks": [item.to_dict() for item in build_market_system_benchmarks()],
+            "strategy_lanes": [item.to_dict() for item in build_strategy_lane_specs()],
         }
     elif args.command == "run-paper-cycle":
         summary = run_paper_cycle(
@@ -141,6 +225,15 @@ def main(argv: list[str] | None = None) -> int:
             decision_ref=args.decision_ref,
             strategy_file=args.strategy_file,
             nav_usd=args.nav_usd,
+        )
+        output = summary.to_dict()
+    elif args.command == "run-paper-replay":
+        summary = run_market_making_replay(
+            root=root,
+            decision_ref=args.decision_ref,
+            strategy_file=args.strategy_file,
+            nav_usd=args.nav_usd,
+            scenario=args.scenario,
         )
         output = summary.to_dict()
     elif args.command == "run-binance-cycle":
@@ -162,6 +255,31 @@ def main(argv: list[str] | None = None) -> int:
             strategy_file=args.strategy_file,
             nav_usd=args.nav_usd,
             order_mode=args.order_mode,
+        )
+        output = summary.to_dict()
+    elif args.command == "run-binance-quote-loop":
+        if args.order_mode == "live" and (
+            not os.getenv("BINANCE_API_KEY") or not os.getenv("BINANCE_API_SECRET")
+        ):
+            parser.error("run-binance-quote-loop 在 live 模式下需要设置 BINANCE_API_KEY 和 BINANCE_API_SECRET")
+        if args.order_mode == "test":
+            test_key = os.getenv("BINANCE_DEMO_API_KEY") or os.getenv("BINANCE_API_KEY")
+            test_secret = os.getenv("BINANCE_DEMO_API_SECRET") or os.getenv("BINANCE_API_SECRET")
+            if not test_key or not test_secret:
+                parser.error(
+                    "run-binance-quote-loop 在 test 模式下需要设置 BINANCE_DEMO_API_KEY/BINANCE_DEMO_API_SECRET，"
+                    "或回退使用 BINANCE_API_KEY/BINANCE_API_SECRET"
+                )
+        summary = run_binance_quote_loop(
+            root=root,
+            decision_ref=args.decision_ref,
+            strategy_file=args.strategy_file,
+            nav_usd=args.nav_usd,
+            iterations=args.iterations,
+            interval_s=args.interval_s,
+            max_consecutive_failures=args.max_consecutive_failures,
+            order_mode=args.order_mode,
+            audit_dir=args.audit_dir,
         )
         output = summary.to_dict()
     elif args.command == "submit-binance-order":

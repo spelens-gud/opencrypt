@@ -1,0 +1,24 @@
+{
+  "strategy_name": "market_making",
+  "family": "microstructure_mm",
+  "symbols": ["BTC/USDT:USDT"],
+  "regime_scope": ["R1", "R2", "R3"],
+  "timeframe": "orderbook",
+  "entry_filter": "spread_and_inventory_skew",
+  "exit_filter": "quote_refresh_or_risk_off",
+  "quote_style": "post_only_inventory_skew",
+  "per_side_notional_fraction": 0.03,
+  "max_inventory_ratio": 0.4,
+  "min_spread_bps": 4.0,
+  "base_quote_offset_bps": 1.0,
+  "inventory_skew_bps": 2.0,
+  "max_quote_age_ms": 600,
+  "max_orphan_orders": 0,
+  "max_replace_distance_bps": 2.0,
+  "max_quantity_drift_ratio": 0.15,
+  "risk_notes": [
+    "require orderbook replay before paper or live",
+    "cancel all quotes on stale market data or orphan order detection",
+    "cap inventory and pending exposure per side"
+  ]
+}

@@ -50,6 +50,7 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
         "id": "cos",
         "name": "Chief of Staff / Quant Control Tower",
         "workspace": "~/.openclaw/workspace-cos",
+        "agentDir": "~/.openclaw/agents/cos/agent",
         "subagents": { "allowAgents": ["cto", "cio", "research", "ops", "ko"] },
         "heartbeat": { "every": "12h", "target": "slack", "to": "channel:<SLACK_CHANNEL_ID_HQ>" }
       },
@@ -57,6 +58,7 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
         "id": "cio",
         "name": "CIO / Strategy & Risk Budget",
         "workspace": "~/.openclaw/workspace-cio",
+        "agentDir": "~/.openclaw/agents/cio/agent",
         "subagents": { "allowAgents": ["research", "ko"] },
         "heartbeat": { "every": "24h", "target": "slack", "to": "channel:<SLACK_CHANNEL_ID_CIO>" }
       },
@@ -64,6 +66,7 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
         "id": "cto",
         "name": "CTO / Quant Platform",
         "workspace": "~/.openclaw/workspace-cto",
+        "agentDir": "~/.openclaw/agents/cto/agent",
         "subagents": { "allowAgents": ["builder", "research", "ko"] },
         "heartbeat": { "every": "12h", "target": "slack", "to": "channel:<SLACK_CHANNEL_ID_CTO>" }
       },
@@ -71,12 +74,14 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
         "id": "builder",
         "name": "Builder / Quant Executor",
         "workspace": "~/.openclaw/workspace-builder",
+        "agentDir": "~/.openclaw/agents/builder/agent",
         "subagents": { "allowAgents": [] }
       },
       {
         "id": "ops",
         "name": "Ops / Risk Control",
         "workspace": "~/.openclaw/workspace-ops",
+        "agentDir": "~/.openclaw/agents/ops/agent",
         "subagents": { "allowAgents": ["ko"] },
         "heartbeat": { "every": "8h", "target": "slack", "to": "channel:<SLACK_CHANNEL_ID_OPS>" }
       },
@@ -84,6 +89,7 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
         "id": "ko",
         "name": "Knowledge Officer",
         "workspace": "~/.openclaw/workspace-ko",
+        "agentDir": "~/.openclaw/agents/ko/agent",
         "subagents": { "allowAgents": [] },
         "heartbeat": { "every": "48h", "target": "slack", "to": "channel:<SLACK_CHANNEL_ID_KNOW>" }
       },
@@ -91,6 +97,7 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
         "id": "research",
         "name": "Research Worker",
         "workspace": "~/.openclaw/workspace-research",
+        "agentDir": "~/.openclaw/agents/research/agent",
         "subagents": { "allowAgents": [] }
       }
     ]
@@ -107,7 +114,7 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
     "subagents": { "tools": { "deny": ["group:sessions"] } }
   },
   "session": {
-    "agentToAgent": { "maxPingPongTurns": 4 }
+    "agentToAgent": { "maxPingPongTurns": 2 }
   }
 }
 ```
@@ -136,7 +143,11 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
     "slack": {
       "replyToMode": "all",
       "groupPolicy": "allowlist",
-      "thread": { "historyScope": "thread", "inheritParent": false },
+      "thread": {
+        "historyScope": "thread",
+        "inheritParent": false,
+        "requireExplicitMention": true
+      },
       "channels": {
         "<SLACK_CHANNEL_ID_HQ>": { "allow": true, "requireMention": false },
         "<SLACK_CHANNEL_ID_CIO>": { "allow": true, "requireMention": false },
@@ -157,10 +168,21 @@ cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.$(date +%Y%m%d-%H%M%S
 
 - `paper` 与 `live` 使用不同 API key
 - 任何 live 相关变更必须先有 `decision_ref`
+- 每个 mainline 任务都必须先声明 `strategy_lane`
+  - `directional_alpha`
+  - `basis_carry`
+  - `microstructure_mm`
+  - `signal_relay`
+  - `grid_dca`
 - 任何提交到 `ops` 的审核包必须附：
+  - `strategy_lane`
+  - `validation_plan_ref`
   - `validation_report_ref`
   - `rollback_ref`
   - `review_ref`
+- rollout 期间还应补：
+  - `rollout_ref`
+  - `observe_ref`
 - `#build` 只做实施，不直接接用户生产指令
 
 ---
@@ -179,8 +201,8 @@ mkdir -p ~/.openclaw/workspace-ko/{inbox,knowledge}
 
 ## 验证顺序
 
-1. 在 `#cio` 发消息，确认 CIO 可产出 `decision_ref`
-2. 在 `#cto` 派发任务，确认 Builder 在 `#build` thread 回复
+1. 在 `#cio` 发消息，确认 CIO 可产出带 `strategy_lane` 的 `decision_ref`
+2. 在 `#cto` 派发任务，确认 Builder 在 `#build` thread 回复，且任务包包含 lane-specific 验证要求
 3. 在 `#ops` 提交一条模拟变更审核，确认 `review_ref` 留痕
 4. 检查 heartbeat 是否运行
 
@@ -218,6 +240,26 @@ PYTHONPATH=src python3 -m opencrew_quant report-binance-health \
 ```
 
 推荐让 heartbeat 消息只贴摘要，不贴整段 JSONL。
+
+---
+
+## Lane 示例
+
+- `directional_alpha`
+  - 例：`trend_follow / mean_reversion`
+  - 重点：回测、replay、paper、一致性验证
+- `basis_carry`
+  - 例：`funding arbitrage / cash-and-carry`
+  - 重点：hedge 对齐、basis/funding 成本、腿间失配告警
+- `microstructure_mm`
+  - 例：`grid market making / inventory skew`
+  - 重点：orderbook replay、quote 生命周期、orphan order
+- `signal_relay`
+  - 例：`TradingView webhook / 外部策略信号`
+  - 重点：信号鉴权、去重、reduce-only 映射
+- `grid_dca`
+  - 例：`grid bot / DCA ladder`
+  - 重点：单 bot 资金上限、梯子健康、库存陷阱
 
 ---
 

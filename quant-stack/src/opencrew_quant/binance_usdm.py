@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -21,6 +21,7 @@ from .execution_gateway.interfaces import OrderAck, OrderIntent
 from .market_data.interfaces import MarketDataSnapshot, MarketDataSource
 from .observability.memory import InMemoryAlertSink, InMemoryMetricsSink
 from .portfolio_engine.simple import FixedRiskPortfolioEngine
+from .quote_engine.simple import QuoteCandidate, build_market_making_plan
 from .risk_engine.simple import PaperRiskEngine
 from .signal_engine.simple import generate_signal
 
@@ -86,6 +87,7 @@ class CcxtExchangeLike(Protocol):
         price: float | None = None,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
+    def cancel_order(self, id: str, symbol: str | None = None, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
 
 
 def _ensure_ccxt_available() -> None:
@@ -287,7 +289,22 @@ class CcxtBinanceUsdmClient:
             reference_price=reference_price,
             funding_rate=funding_rate,
             latency_ms=latency_ms,
+            best_bid=float(bid) if bid is not None else None,
+            best_ask=float(ask) if ask is not None else None,
+            quote_age_ms=latency_ms,
         )
+
+    def fetch_open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        self.ensure_markets_loaded()
+        try:
+            return self.exchange.fetch_open_orders(symbol=symbol)
+        except Exception as exc:
+            raise BinanceApiError(f"ccxt fetch_open_orders 失败: {exc}") from exc
+
+    def submit_order(self, intent: OrderIntent) -> OrderAck:
+        if intent.order_type == "limit":
+            return self.submit_limit_order(intent)
+        return self.submit_market_order(intent)
 
     def submit_market_order(self, intent: OrderIntent) -> OrderAck:
         self.ensure_markets_loaded()
@@ -309,6 +326,41 @@ class CcxtBinanceUsdmClient:
             ) from exc
         order_id = str(response.get("id") or response.get("orderId") or f"{self.order_mode}-order")
         return OrderAck(order_id=order_id, accepted=True, reason=self.order_mode)
+
+    def submit_limit_order(self, intent: OrderIntent) -> OrderAck:
+        self.ensure_markets_loaded()
+        params: dict[str, Any] = {"reduceOnly": intent.reduce_only}
+        if intent.post_only:
+            params["postOnly"] = True
+            params["timeInForce"] = "GTX"
+        if intent.client_tag:
+            params["newClientOrderId"] = intent.client_tag
+        try:
+            response = self.exchange.create_order(
+                intent.symbol,
+                "limit",
+                intent.side.value,
+                intent.quantity,
+                intent.limit_price,
+                params,
+            )
+        except Exception as exc:
+            raise BinanceApiError(
+                f"ccxt create_limit_order 失败: {exc}. "
+                "如果当前是 test 模式，请确认使用的是 Binance demo trading 专用 API key，"
+                "并已为该 key 配置允许的 IP 与期货交易权限。"
+            ) from exc
+        order_id = str(response.get("id") or response.get("orderId") or f"{self.order_mode}-order")
+        return OrderAck(order_id=order_id, accepted=True, reason=self.order_mode)
+
+    def cancel_order(self, symbol: str, order_id: str) -> OrderAck:
+        self.ensure_markets_loaded()
+        try:
+            response = self.exchange.cancel_order(order_id, symbol)
+        except Exception as exc:
+            raise BinanceApiError(f"ccxt cancel_order 失败: {exc}") from exc
+        resolved_id = str(response.get("id") or response.get("orderId") or order_id)
+        return OrderAck(order_id=resolved_id, accepted=True, reason=f"{self.order_mode}-cancelled")
 
 
 class BinanceUsdmMarketDataSource(MarketDataSource):
@@ -472,6 +524,34 @@ class BinanceReconcileLoopSummary:
 
 
 @dataclass(slots=True)
+class BinanceQuoteLoopSummary:
+    decision_ref: str
+    environment: str
+    venue: str
+    strategy: str
+    order_mode: str
+    interval_s: int
+    iterations: int
+    cycles: list[dict[str, object]]
+    metrics: dict[str, float]
+    alerts: list[dict[str, str]]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "decision_ref": self.decision_ref,
+            "environment": self.environment,
+            "venue": self.venue,
+            "strategy": self.strategy,
+            "order_mode": self.order_mode,
+            "interval_s": self.interval_s,
+            "iterations": self.iterations,
+            "cycles": self.cycles,
+            "metrics": self.metrics,
+            "alerts": self.alerts,
+        }
+
+
+@dataclass(slots=True)
 class BinanceHealthReport:
     status: str
     decision_ref: str | None
@@ -501,8 +581,46 @@ class BinanceHealthReport:
         }
 
 
-def _preview_order(intent: OrderIntent) -> OrderAck:
-    return OrderAck(order_id="preview-0001", accepted=True, reason="preview-only")
+@dataclass(slots=True)
+class PreviewExecutionGateway:
+    order_counter: int = 0
+    cancelled_order_ids: list[str] = field(default_factory=list)
+    open_orders: list[dict[str, object]] = field(default_factory=list)
+
+    def submit(self, intent: OrderIntent) -> OrderAck:
+        self.order_counter += 1
+        order_id = f"preview-{self.order_counter:04d}"
+        self.open_orders.append(
+            {
+                "order_id": order_id,
+                "client_order_id": intent.client_tag or order_id,
+                "symbol": intent.symbol,
+                "side": intent.side.value,
+                "type": intent.order_type,
+                "status": "open",
+                "amount": intent.quantity,
+                "remaining": intent.quantity,
+                "price": intent.limit_price or 0.0,
+                "reduce_only": intent.reduce_only,
+                "post_only": intent.post_only,
+                "timestamp": None,
+            }
+        )
+        return OrderAck(order_id=order_id, accepted=True, reason="preview-only")
+
+    def cancel(self, symbol: str, order_id: str) -> OrderAck:
+        self.cancelled_order_ids.append(order_id)
+        self.open_orders = [
+            item
+            for item in self.open_orders
+            if not (str(item.get("order_id")) == order_id and str(item.get("symbol")) == symbol)
+        ]
+        return OrderAck(order_id=order_id, accepted=True, reason="preview-cancelled")
+
+    def list_open_orders(self, symbol: str | None = None) -> list[dict[str, object]]:
+        if symbol is None:
+            return [dict(item) for item in self.open_orders]
+        return [dict(item) for item in self.open_orders if str(item.get("symbol")) == symbol]
 
 
 def _exchange_urls(exchange: CcxtExchangeLike) -> tuple[str, str]:
@@ -578,9 +696,11 @@ def _normalize_positions(positions: list[dict[str, Any]]) -> list[dict[str, obje
 def _normalize_open_orders(open_orders: list[dict[str, Any]]) -> list[dict[str, object]]:
     normalized: list[dict[str, object]] = []
     for order in open_orders:
+        info = order.get("info") if isinstance(order.get("info"), dict) else {}
         normalized.append(
             {
                 "order_id": str(order.get("id") or order.get("clientOrderId") or ""),
+                "client_order_id": str(order.get("clientOrderId") or (info.get("clientOrderId") if isinstance(info, dict) else "") or ""),
                 "symbol": str(order.get("symbol") or ""),
                 "side": str(order.get("side") or ""),
                 "type": str(order.get("type") or ""),
@@ -588,8 +708,9 @@ def _normalize_open_orders(open_orders: list[dict[str, Any]]) -> list[dict[str, 
                 "amount": _to_float(order.get("amount")),
                 "remaining": _to_float(order.get("remaining")),
                 "price": _to_float(order.get("price")),
-                "reduce_only": bool((order.get("info") or {}).get("reduceOnly", False))
-                if isinstance(order.get("info"), dict)
+                "reduce_only": bool(info.get("reduceOnly", False)) if isinstance(info, dict) else False,
+                "post_only": bool(info.get("postOnly", False) or info.get("timeInForce") == "GTX")
+                if isinstance(info, dict)
                 else False,
                 "timestamp": order.get("timestamp"),
             }
@@ -643,6 +764,293 @@ def _normalize_order_entries(orders: list[dict[str, Any]]) -> list[dict[str, obj
     return normalized
 
 
+def _price_distance_bps(lhs: float | None, rhs: float | None) -> float:
+    if lhs is None or rhs is None or lhs <= 0:
+        return 9999.0
+    return abs(lhs - rhs) / lhs * 10000.0
+
+
+def _quote_replace_required(
+    existing: dict[str, object],
+    candidate: QuoteCandidate,
+    quantity: float,
+    *,
+    max_replace_distance_bps: float,
+    max_quantity_drift_ratio: float,
+) -> bool:
+    if str(existing.get("side")) != candidate.side.value:
+        return True
+    if str(existing.get("type")) != "limit":
+        return True
+    if bool(existing.get("post_only")) != candidate.post_only:
+        return True
+    if _price_distance_bps(_to_float(existing.get("price")), candidate.limit_price) > max_replace_distance_bps:
+        return True
+    existing_quantity = _to_float(existing.get("amount"))
+    if existing_quantity <= 0:
+        return True
+    quantity_drift = abs(existing_quantity - quantity) / existing_quantity
+    return quantity_drift > max_quantity_drift_ratio
+
+
+def _execute_market_making_binance_cycle(
+    *,
+    decision_ref: str,
+    strategy: Any,
+    stack: Any,
+    nav_usd: float,
+    order_mode: str,
+    binance_client: CcxtBinanceUsdmClient,
+    portfolio: FixedRiskPortfolioEngine,
+    risk_engine: PaperRiskEngine,
+    audit: InMemoryAuditLogSink,
+    metrics: InMemoryMetricsSink,
+    alerts: InMemoryAlertSink,
+    preview_execution: PreviewExecutionGateway | None = None,
+) -> list[dict[str, object]]:
+    order_summaries: list[dict[str, object]] = []
+    max_replace_distance_bps = float(strategy.parameters.get("max_replace_distance_bps", 2.0))
+    max_quantity_drift_ratio = float(strategy.parameters.get("max_quantity_drift_ratio", 0.15))
+
+    for symbol in strategy.symbols:
+        snapshot = binance_client.fetch_snapshot(symbol)
+        metrics.gauge(f"latency_ms.{symbol}", float(snapshot.latency_ms))
+        metrics.gauge(f"inventory_ratio.{symbol}", snapshot.inventory_ratio)
+
+        if preview_execution is not None:
+            existing_orders = preview_execution.list_open_orders(symbol)
+        else:
+            existing_orders = [
+                item for item in _normalize_open_orders(binance_client.fetch_open_orders(symbol)) if item["symbol"] == symbol
+            ]
+        metrics.gauge(f"open_order_count.{symbol}", float(len(existing_orders)))
+        current_by_tag = {
+            str(item.get("client_order_id") or item.get("order_id")): item
+            for item in existing_orders
+        }
+
+        if snapshot.latency_ms > stack.data_latency_budget_ms:
+            for existing in existing_orders:
+                cancel_ack = (
+                    preview_execution.cancel(symbol, str(existing["order_id"]))
+                    if preview_execution is not None
+                    else binance_client.cancel_order(symbol, str(existing["order_id"]))
+                )
+                audit.write(
+                    AuditEvent(
+                        event_type=f"binance_{order_mode}_quote_cancel",
+                        reference_id=cancel_ack.order_id,
+                        payload={
+                            "decision_ref": decision_ref,
+                            "symbol": symbol,
+                            "client_tag": existing.get("client_order_id") or existing.get("order_id"),
+                            "reason": "latency-budget-breach",
+                        },
+                    )
+                )
+            alerts.notify("latency-budget-breach", f"{symbol} latency {snapshot.latency_ms}ms")
+            continue
+
+        plan = build_market_making_plan(strategy, snapshot)
+        metrics.gauge(f"spread_bps.{symbol}", plan.spread_bps)
+        metrics.gauge(f"quote_refresh_ms.{symbol}", float(plan.quote_refresh_ms))
+
+        if plan.kill_switch_reason:
+            for existing in existing_orders:
+                cancel_ack = (
+                    preview_execution.cancel(symbol, str(existing["order_id"]))
+                    if preview_execution is not None
+                    else binance_client.cancel_order(symbol, str(existing["order_id"]))
+                )
+                audit.write(
+                    AuditEvent(
+                        event_type=f"binance_{order_mode}_quote_cancel",
+                        reference_id=cancel_ack.order_id,
+                        payload={
+                            "decision_ref": decision_ref,
+                            "symbol": symbol,
+                            "client_tag": existing.get("client_order_id") or existing.get("order_id"),
+                            "reason": plan.kill_switch_reason,
+                        },
+                    )
+                )
+            alerts.notify(plan.kill_switch_reason, f"{symbol} quote plan stopped")
+            continue
+
+        desired_tags: set[str] = set()
+        for candidate in plan.candidates:
+            desired_tags.add(candidate.quote_role)
+            allocation = portfolio.build_target(symbol, candidate.target_weight, nav_usd)
+            quantity = binance_client.quantize_amount(symbol, allocation.target_notional_usd / candidate.limit_price)
+            min_notional_usd = binance_client.min_notional_usd(symbol)
+            intent = OrderIntent(
+                symbol=symbol,
+                side=candidate.side,
+                quantity=quantity,
+                notional_usd=allocation.target_notional_usd,
+                order_type="limit",
+                limit_price=candidate.limit_price,
+                post_only=candidate.post_only,
+                reduce_only=False,
+                client_tag=candidate.quote_role,
+            )
+            approved, reason = risk_engine.approve(intent, min_notional_usd=min_notional_usd)
+            audit.write(
+                AuditEvent(
+                    event_type="risk_check",
+                    reference_id=decision_ref,
+                    payload={
+                        "symbol": symbol,
+                        "approved": approved,
+                        "reason": reason,
+                        "target_weight": candidate.target_weight,
+                        "reference_price": snapshot.reference_price,
+                        "mid_price": snapshot.mid_price,
+                        "min_notional_usd": min_notional_usd,
+                        "side": candidate.side.value,
+                        "client_tag": candidate.quote_role,
+                        "order_type": intent.order_type,
+                        "limit_price": intent.limit_price,
+                        "post_only": intent.post_only,
+                    },
+                )
+            )
+            if not approved:
+                alerts.notify("risk-rejected", f"{symbol} {candidate.quote_role}: {reason}")
+                continue
+
+            existing = current_by_tag.get(candidate.quote_role)
+            replaced_existing = False
+            if existing is not None and _quote_replace_required(
+                existing,
+                candidate,
+                quantity,
+                max_replace_distance_bps=max_replace_distance_bps,
+                max_quantity_drift_ratio=max_quantity_drift_ratio,
+            ):
+                cancel_ack = (
+                    preview_execution.cancel(symbol, str(existing["order_id"]))
+                    if preview_execution is not None
+                    else binance_client.cancel_order(symbol, str(existing["order_id"]))
+                )
+                audit.write(
+                    AuditEvent(
+                        event_type=f"binance_{order_mode}_quote_cancel",
+                        reference_id=cancel_ack.order_id,
+                        payload={
+                            "decision_ref": decision_ref,
+                            "symbol": symbol,
+                            "client_tag": candidate.quote_role,
+                            "reason": "replace",
+                        },
+                    )
+                )
+                existing = None
+                replaced_existing = True
+            elif existing is not None:
+                audit.write(
+                    AuditEvent(
+                        event_type=f"binance_{order_mode}_quote_keep",
+                        reference_id=str(existing["order_id"]),
+                        payload={
+                            "decision_ref": decision_ref,
+                            "symbol": symbol,
+                            "client_tag": candidate.quote_role,
+                            "price": existing.get("price"),
+                            "amount": existing.get("amount"),
+                        },
+                    )
+                )
+                order_summaries.append(
+                    {
+                        "order_id": existing["order_id"],
+                        "symbol": symbol,
+                        "venue_symbol": to_binance_symbol(symbol),
+                        "accepted": True,
+                        "quantity": existing.get("amount"),
+                        "notional_usd": allocation.target_notional_usd,
+                        "target_weight": candidate.target_weight,
+                        "side": candidate.side.value,
+                        "regime": plan.regime,
+                        "strategy": plan.strategy_name,
+                        "order_mode": order_mode,
+                        "order_type": "limit",
+                        "limit_price": existing.get("price"),
+                        "post_only": bool(existing.get("post_only")),
+                        "client_tag": candidate.quote_role,
+                        "action": "keep",
+                    }
+                )
+                continue
+
+            ack = preview_execution.submit(intent) if preview_execution is not None else binance_client.submit_order(intent)
+            audit.write(
+                AuditEvent(
+                    event_type=f"binance_{order_mode}_quote_order",
+                    reference_id=ack.order_id,
+                    payload={
+                        "decision_ref": decision_ref,
+                        "symbol": symbol,
+                        "venue_symbol": to_binance_symbol(symbol),
+                        "strategy": plan.strategy_name,
+                        "regime": plan.regime,
+                        "confidence": candidate.confidence,
+                        "side": candidate.side.value,
+                        "quantity": quantity,
+                        "notional_usd": allocation.target_notional_usd,
+                        "client_tag": candidate.quote_role,
+                        "order_type": intent.order_type,
+                        "limit_price": intent.limit_price,
+                        "post_only": intent.post_only,
+                    },
+                )
+            )
+            order_summaries.append(
+                {
+                    "order_id": ack.order_id,
+                    "symbol": symbol,
+                    "venue_symbol": to_binance_symbol(symbol),
+                    "accepted": ack.accepted,
+                    "quantity": quantity,
+                    "notional_usd": allocation.target_notional_usd,
+                    "target_weight": candidate.target_weight,
+                    "side": candidate.side.value,
+                    "regime": plan.regime,
+                    "strategy": plan.strategy_name,
+                    "order_mode": order_mode,
+                    "order_type": intent.order_type,
+                    "limit_price": intent.limit_price,
+                    "post_only": intent.post_only,
+                    "client_tag": candidate.quote_role,
+                    "action": "replace" if replaced_existing else "place",
+                }
+            )
+
+        for existing in existing_orders:
+            tag = str(existing.get("client_order_id") or existing.get("order_id"))
+            if tag in desired_tags:
+                continue
+            cancel_ack = (
+                preview_execution.cancel(symbol, str(existing["order_id"]))
+                if preview_execution is not None
+                else binance_client.cancel_order(symbol, str(existing["order_id"]))
+            )
+            audit.write(
+                AuditEvent(
+                    event_type=f"binance_{order_mode}_quote_cancel",
+                    reference_id=cancel_ack.order_id,
+                    payload={
+                        "decision_ref": decision_ref,
+                        "symbol": symbol,
+                        "client_tag": tag,
+                        "reason": "not-in-plan",
+                    },
+                )
+            )
+
+    return order_summaries
+
+
 def _extract_balance_position_symbols(balance: dict[str, Any]) -> set[str]:
     info = balance.get("info", {}) if isinstance(balance, dict) else {}
     positions = info.get("positions", []) if isinstance(info, dict) else []
@@ -689,6 +1097,44 @@ def run_binance_cycle(
     audit = InMemoryAuditLogSink()
     metrics = InMemoryMetricsSink()
     alerts = InMemoryAlertSink()
+    preview_execution = PreviewExecutionGateway() if order_mode == "preview" else None
+
+    if strategy.name == "market_making":
+        order_summaries = _execute_market_making_binance_cycle(
+            decision_ref=decision_ref,
+            strategy=strategy,
+            stack=stack,
+            nav_usd=nav_usd,
+            order_mode=order_mode,
+            binance_client=binance_client,
+            portfolio=portfolio,
+            risk_engine=risk_engine,
+            audit=audit,
+            metrics=metrics,
+            alerts=alerts,
+            preview_execution=preview_execution,
+        )
+        market_base_url, trade_base_url = _exchange_urls(binance_client.exchange)
+        return BinanceCycleSummary(
+            decision_ref=decision_ref,
+            environment=stack.environment,
+            venue=venue.name,
+            strategy=strategy.name,
+            order_mode=order_mode,
+            market_base_url=market_base_url,
+            trade_base_url=trade_base_url,
+            orders=order_summaries,
+            audit_events=[
+                {
+                    "event_type": event.event_type,
+                    "reference_id": event.reference_id,
+                    "payload": event.payload,
+                }
+                for event in audit.events
+            ],
+            metrics=metrics.gauges,
+            alerts=alerts.alerts,
+        )
 
     order_summaries: list[dict[str, object]] = []
     for symbol in strategy.symbols:
@@ -697,19 +1143,21 @@ def run_binance_cycle(
         metrics.gauge(f"latency_ms.{symbol}", float(snapshot.latency_ms))
         metrics.gauge(f"signal_confidence.{symbol}", decision.confidence)
         metrics.gauge(f"funding_rate.{symbol}", float(snapshot.funding_rate or 0.0))
+        metrics.gauge(f"target_weight.{symbol}", decision.target_weight)
 
         if snapshot.latency_ms > stack.data_latency_budget_ms:
             alerts.notify("latency-budget-breach", f"{symbol} latency {snapshot.latency_ms}ms")
             continue
-        if decision.target_weight <= 0:
+        if decision.target_weight == 0:
             continue
 
         allocation = portfolio.build_target(symbol, decision.target_weight, nav_usd)
         quantity = binance_client.quantize_amount(symbol, allocation.target_notional_usd / snapshot.mid_price)
         min_notional_usd = binance_client.min_notional_usd(symbol)
+        side = Side.BUY if decision.target_weight >= 0 else Side.SELL
         intent = OrderIntent(
             symbol=symbol,
-            side=Side.BUY,
+            side=side,
             quantity=quantity,
             notional_usd=allocation.target_notional_usd,
             reduce_only=False,
@@ -727,6 +1175,7 @@ def run_binance_cycle(
                     "reference_price": snapshot.reference_price,
                     "mid_price": snapshot.mid_price,
                     "min_notional_usd": min_notional_usd,
+                    "side": side.value,
                 },
             )
         )
@@ -734,7 +1183,7 @@ def run_binance_cycle(
             alerts.notify("risk-rejected", f"{symbol}: {reason}")
             continue
 
-        ack = _preview_order(intent) if order_mode == "preview" else binance_client.submit_market_order(intent)
+        ack = preview_execution.submit(intent) if preview_execution is not None else binance_client.submit_market_order(intent)
         audit.write(
             AuditEvent(
                 event_type=f"binance_{order_mode}_order",
@@ -746,6 +1195,7 @@ def run_binance_cycle(
                     "strategy": decision.strategy_name,
                     "regime": decision.regime,
                     "confidence": decision.confidence,
+                    "side": side.value,
                     "quantity": quantity,
                     "notional_usd": allocation.target_notional_usd,
                 },
@@ -759,6 +1209,8 @@ def run_binance_cycle(
                 "accepted": ack.accepted,
                 "quantity": quantity,
                 "notional_usd": allocation.target_notional_usd,
+                "target_weight": decision.target_weight,
+                "side": side.value,
                 "regime": decision.regime,
                 "strategy": decision.strategy_name,
                 "order_mode": order_mode,
@@ -854,7 +1306,8 @@ def submit_binance_order(
     if not approved:
         alerts.notify("risk-rejected", f"{symbol}: {reason}")
     else:
-        ack = _preview_order(intent) if order_mode == "preview" else binance_client.submit_market_order(intent)
+        preview_execution = PreviewExecutionGateway() if order_mode == "preview" else None
+        ack = preview_execution.submit(intent) if preview_execution is not None else binance_client.submit_market_order(intent)
         audit.write(
             AuditEvent(
                 event_type=f"binance_{order_mode}_order",
@@ -1285,6 +1738,164 @@ def run_binance_reconcile_loop(
         root=base,
         audit_dir=audit_dir,
         stream_name="reconcile_loops",
+        payload=summary.to_dict(),
+    )
+    return summary
+
+
+def run_binance_quote_loop(
+    root: str | Path,
+    decision_ref: str,
+    order_mode: str = "preview",
+    strategy_file: str = "market_making.paper.json",
+    nav_usd: float = 100000.0,
+    iterations: int = 1,
+    interval_s: int | None = None,
+    max_consecutive_failures: int = 3,
+    audit_dir: str | Path | None = None,
+    client: CcxtBinanceUsdmClient | None = None,
+    sleeper: Any | None = None,
+) -> BinanceQuoteLoopSummary:
+    if order_mode not in {"preview", "test", "live"}:
+        raise ValueError("order_mode must be preview, test, or live")
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
+    if max_consecutive_failures <= 0:
+        raise ValueError("max_consecutive_failures must be positive")
+
+    base = Path(root)
+    stack = load_stack_config(base / "configs" / "paper" / "core-stack.json")
+    venue = load_venue_config(base / "configs" / "venues" / "binance.paper.json")
+    strategy = load_strategy_config(base / "configs" / "strategies" / strategy_file, venue.name)
+    risk_limits = load_risk_limits(base / "configs" / "risk" / "default.paper.json")
+    if strategy.name != "market_making":
+        raise ValueError("run_binance_quote_loop currently only supports market_making.paper.json")
+
+    resolved_interval_s = venue.reconcile_interval_s if interval_s is None else interval_s
+    if resolved_interval_s < 0:
+        raise ValueError("interval_s must be non-negative")
+
+    binance_client = client or CcxtBinanceUsdmClient.from_env(
+        order_mode=order_mode,
+        proxy_url=venue.proxy_url,
+    )
+    portfolio = FixedRiskPortfolioEngine(risk_limits)
+    risk_engine = PaperRiskEngine(risk_limits)
+    loop_metrics = InMemoryMetricsSink()
+    loop_alerts = InMemoryAlertSink()
+    sleep_fn = sleeper or time.sleep
+    cycles: list[dict[str, object]] = []
+    consecutive_failures = 0
+    preview_execution = PreviewExecutionGateway() if order_mode == "preview" else None
+
+    for index in range(iterations):
+        cycle_ref = f"{decision_ref}:cycle-{index + 1}"
+        cycle_audit = InMemoryAuditLogSink()
+        cycle_metrics = InMemoryMetricsSink()
+        cycle_alerts = InMemoryAlertSink()
+        try:
+            order_summaries = _execute_market_making_binance_cycle(
+                decision_ref=cycle_ref,
+                strategy=strategy,
+                stack=stack,
+                nav_usd=nav_usd,
+                order_mode=order_mode,
+                binance_client=binance_client,
+                portfolio=portfolio,
+                risk_engine=risk_engine,
+                audit=cycle_audit,
+                metrics=cycle_metrics,
+                alerts=cycle_alerts,
+                preview_execution=preview_execution,
+            )
+            cycle_ok = not any(
+                alert["title"] in {"latency-budget-breach", "stale-quote", "orphan-orders", "risk-rejected"}
+                for alert in cycle_alerts.alerts
+            )
+            if not cycle_ok:
+                loop_alerts.notify("quote-loop-alert", f"{cycle_ref}: alerts={cycle_alerts.alerts}")
+            open_order_count = (
+                len(preview_execution.list_open_orders()) if preview_execution is not None else float("nan")
+            )
+            if preview_execution is None and strategy.symbols:
+                open_order_count = float(len(binance_client.fetch_open_orders(strategy.symbols[0])))
+            cycles.append(
+                {
+                    "iteration": index + 1,
+                    "decision_ref": cycle_ref,
+                    "ok": cycle_ok,
+                    "orders": order_summaries,
+                    "audit_events": [
+                        {
+                            "event_type": event.event_type,
+                            "reference_id": event.reference_id,
+                            "payload": event.payload,
+                        }
+                        for event in cycle_audit.events
+                    ],
+                    "metrics": cycle_metrics.gauges,
+                    "alerts": cycle_alerts.alerts,
+                    "open_order_count": open_order_count,
+                }
+            )
+            loop_metrics.gauge(f"quote_loop.cycle_ok.{index + 1}", 1.0 if cycle_ok else 0.0)
+            loop_metrics.gauge(
+                f"quote_loop.order_count.{index + 1}",
+                float(len(order_summaries)),
+            )
+            loop_metrics.gauge(
+                f"quote_loop.open_order_count.{index + 1}",
+                float(open_order_count if open_order_count == open_order_count else 0.0),
+            )
+            consecutive_failures = 0
+        except Exception as exc:
+            consecutive_failures += 1
+            loop_alerts.notify("quote-loop-error", f"{cycle_ref}: {exc}")
+            cycles.append(
+                {
+                    "iteration": index + 1,
+                    "decision_ref": cycle_ref,
+                    "ok": False,
+                    "error": str(exc),
+                    "alerts": [{"title": "quote-loop-error", "body": str(exc)}],
+                }
+            )
+            loop_metrics.gauge(f"quote_loop.cycle_ok.{index + 1}", 0.0)
+            loop_metrics.gauge(
+                f"quote_loop.consecutive_failures.{index + 1}",
+                float(consecutive_failures),
+            )
+            if consecutive_failures >= max_consecutive_failures:
+                loop_alerts.notify(
+                    "quote-loop-stopped",
+                    f"stopped after {consecutive_failures} consecutive failures at {cycle_ref}",
+                )
+                break
+        if index < iterations - 1 and resolved_interval_s > 0:
+            sleep_fn(resolved_interval_s)
+
+    loop_metrics.gauge("quote_loop.total_cycles", float(iterations))
+    loop_metrics.gauge(
+        "quote_loop.ok_cycles",
+        float(sum(1 for cycle in cycles if bool(cycle["ok"]))),
+    )
+    loop_metrics.gauge("quote_loop.completed_cycles", float(len(cycles)))
+    summary = BinanceQuoteLoopSummary(
+        decision_ref=decision_ref,
+        environment=stack.environment,
+        venue=venue.name,
+        strategy=strategy.name,
+        order_mode=order_mode,
+        interval_s=resolved_interval_s,
+        iterations=iterations,
+        cycles=cycles,
+        metrics=loop_metrics.gauges,
+        alerts=loop_alerts.alerts,
+    )
+    append_jsonl_record(
+        root=base,
+        audit_dir=audit_dir,
+        stream_name="quote_loops",
         payload=summary.to_dict(),
     )
     return summary

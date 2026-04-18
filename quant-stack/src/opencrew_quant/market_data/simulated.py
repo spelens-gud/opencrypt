@@ -12,6 +12,11 @@ class SnapshotSeed:
     reference_price: float
     funding_rate: float | None
     latency_ms: int
+    best_bid: float | None = None
+    best_ask: float | None = None
+    inventory_ratio: float = 0.0
+    orphan_order_count: int = 0
+    quote_age_ms: int | None = None
 
 
 class SimulatedMarketDataSource(MarketDataSource):
@@ -27,6 +32,11 @@ class SimulatedMarketDataSource(MarketDataSource):
                 reference_price=seed.reference_price,
                 funding_rate=seed.funding_rate,
                 latency_ms=seed.latency_ms,
+                best_bid=seed.best_bid,
+                best_ask=seed.best_ask,
+                inventory_ratio=seed.inventory_ratio,
+                orphan_order_count=seed.orphan_order_count,
+                quote_age_ms=seed.quote_age_ms,
             )
             for seed in seeds
         }

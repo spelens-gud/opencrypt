@@ -1,4 +1,4 @@
-# Crypto Quant Stack Benchmark (Updated 2026-04-17)
+# Crypto Quant Stack Benchmark (Updated 2026-04-18)
 
 ## 目标
 
@@ -12,17 +12,32 @@
 
 ## 当前最值得对标的系统
 
-> 下面的“热度”优先参考 2026-04-17 当天官方 GitHub 仓库的可见 star 数、官方站点/文档成熟度、以及它是否真能映射到 OpenClaw 的多 Agent 职责链。
+> 下面的“热度”优先参考 2026-04-18 当天官方 GitHub 仓库 / 官方站点可见信息、官方文档成熟度、以及它是否真能映射到 OpenClaw 的多 Agent 职责链。
 
 | 系统 | 当前热度信号 | 更适合什么 | 我们借什么 | 不借什么 |
 |------|-------------|-----------|-----------|---------|
-| **Freqtrade** | GitHub `48.8k` stars；官方定位是开源 crypto trading bot | 中低频 CTA、回测、dry-run、参数迭代 | 回测/仿真基线、策略参数化、研究工作流 | 单进程包揽全栈 |
-| **LEAN** | GitHub `18.4k` stars；研究/回测/live 一致性成熟 | 研究到生产一致性、事件驱动状态机 | phase gate、broker/risk 分层、研究/生产 parity | 全资产全平台的大而全迁移 |
-| **Hummingbot** | GitHub `18.1k` stars；官方强调高频 crypto bot | 做市、套利、执行器、订单簿驱动 | connector/executor 抽象、执行器扩展、订单生命周期 | 让执行器直接越过治理闸门 |
-| **NautilusTrader** | GitHub `22.0k` stars；官方强调 deterministic event-driven | 工程化 live/backtest 一致性、强状态模型 | 订单状态机、适配器、审计边界 | 第一阶段就追求其复杂度 |
-| **Jesse** | GitHub `7.7k` stars；交易员友好 | 策略试错、回放、研究体验 | trader-friendly 策略接口、快速反馈 | 过度偏单策略开发体验 |
-| **OctoBot** | GitHub `5.7k` stars；官方强调简单界面 + 多交易所 | 产品化运营、控制台、模板化运行 | 控制台视角、操作路径、面向用户的监控组织 | 一体化 UI 驱动底层架构 |
+| **Freqtrade** | GitHub `46.6k` stars；官方定位是开源 crypto trading bot | 中低频 CTA、回测、dry-run、参数迭代 | 回测/仿真基线、策略参数化、研究工作流 | 单进程包揽全栈 |
+| **LEAN** | GitHub `16.3k` stars；研究/回测/live 一致性成熟 | 研究到生产一致性、事件驱动状态机 | phase gate、broker/risk 分层、研究/生产 parity | 全资产全平台的大而全迁移 |
+| **Hummingbot** | GitHub `15.5k` stars；官方文档强调 connectors / executors / Dashboard / Gateway | 做市、套利、执行器、订单簿驱动 | connector/executor 抽象、执行器扩展、订单生命周期、多 bot 编排 | 让执行器直接越过治理闸门 |
+| **NautilusTrader** | GitHub `17.3k` stars；官方强调 deterministic event-driven | 工程化 live/backtest 一致性、强状态模型 | 订单状态机、适配器、审计边界 | 第一阶段就追求其复杂度 |
+| **Jesse** | GitHub `7.3k` stars；交易员友好 | 策略试错、回放、研究体验 | trader-friendly 策略接口、快速反馈 | 过度偏单策略开发体验 |
+| **OctoBot** | GitHub `5k+` stars；官方强调 Web/Mobile/Telegram 控制台与模板化策略 | 产品化运营、控制台、模板化运行 | 控制台视角、操作路径、面向用户的监控组织 | 一体化 UI 驱动底层架构 |
 | **3Commas** | 商业平台；官方页面强调 DCA/Grid/Signal/SmartTrade 与控制台 | 面向终端用户的 bot 产品、运营编排 | dashboard、bot 模板、策略入口与管理体验 | 黑盒执行、SaaS 依赖 |
+
+## 本地 clone 结果
+
+已按 2026-04-18 的调研结果将主要开源参考系统 clone 到本地，便于后续直接读源码和文档做 lane 映射：
+
+| 系统 | 本地路径 |
+|------|---------|
+| Freqtrade | `.benchmarks/external/freqtrade` |
+| Hummingbot | `.benchmarks/external/hummingbot` |
+| QuantConnect LEAN | `.benchmarks/external/lean` |
+| NautilusTrader | `.benchmarks/external/nautilus_trader` |
+| Jesse | `.benchmarks/external/jesse` |
+| OctoBot | `.benchmarks/external/octobot` |
+
+> `3Commas` 是商业产品，没有可 clone 的官方开源主仓，保留为产品层 benchmark。
 
 ### 1. Freqtrade
 - 类型：开源、Python、偏中低频策略交易
@@ -45,6 +60,7 @@
 - 我们借什么：
   - `connector + executor` 设计
   - 做市、套利、执行器扩展模型
+  - Dashboard/多实例运维组织方式
 - 不直接照搬什么：
   - 不让做市逻辑覆盖所有团队流程
   - 不让执行器绕过 Ops 闸门直接 live
@@ -107,9 +123,46 @@
   - 不依赖 SaaS 封闭能力
   - 不把核心执行与风控外包给黑盒
 
+## 交易逻辑摘要
+
+### Freqtrade / Jesse：方向型研究主线
+- 共同点：
+  - 策略逻辑主要围绕 K 线、指标、参数调优、回测和 paper/live 切换
+  - 都强调“研究者快速试错”，适合做 `trend_follow / mean_reversion / breakout / ml_filter`
+- 对 OpenClaw 的启发：
+  - `research -> cio` 负责提出候选策略和阈值
+  - `cto -> builder` 负责把方向策略转成可回放、可 paper 的执行闭环
+  - 不应把全部治理收敛到策略 runtime 内部
+
+### Hummingbot / NautilusTrader：执行器与状态机主线
+- 共同点：
+  - 更强调 connectors / adapters / executors / order lifecycle
+  - 更适合 `market making / cross venue / basis carry / hedge rebalance`
+- 对 OpenClaw 的启发：
+  - `cto` 必须把任务包拆到 `data / execution / reconcile / risk`
+  - `builder` 的验证不止是策略收益，还包括 orphan order、quote staleness、hedge mismatch
+  - `ops` 对这类 lane 的审核重点必须从“收益”转向“状态一致性和失控保护”
+
+### LEAN：模块化工作流主线
+- 核心逻辑：
+  - `Alpha -> Portfolio Construction -> Risk Management -> Execution`
+  - 研究、回测、live 共享一套模块接口和数据流
+- 对 OpenClaw 的启发：
+  - `cio` 输出的不是模糊观点，而是对 `strategy_mix / risk_budget` 的模块化输入
+  - `cto` 负责把输入变成各层模块契约
+  - `ops` 永远在 `Execution` 前拥有硬闸门
+
+### OctoBot / 3Commas：产品化 bot 主线
+- 核心逻辑：
+  - 用 DCA、Grid、Signal、SmartTrade、TradingView/Webhook 作为策略入口
+  - 把“创建 bot、启停 bot、观察 bot、调整 bot”做成运营控制台
+- 对 OpenClaw 的启发：
+  - 量化团队不能只有研发链路，还要有 `signal relay / grid dca / operator console` 视角
+  - CoS/Ops 需要管理 bot 模板、观察窗、健康检查，而不是只关心代码 merge
+
 ## 热度结论
 
-如果以 2026-04-17 的“GitHub 热度 + 官方文档成熟度 + 产品活跃度 + 对 OpenClaw 可映射性”综合判断：
+如果以 2026-04-18 的“GitHub 热度 + 官方文档成熟度 + 产品活跃度 + 对 OpenClaw 可映射性”综合判断：
 
 - **研究回测主线**：`Freqtrade`
 - **做市/套利执行主线**：`Hummingbot`
@@ -122,6 +175,28 @@
 - `LEAN / NautilusTrader` 负责状态机和研究到生产一致性
 - `Hummingbot` 负责执行器和 connector 设计
 - `OctoBot / 3Commas` 负责控制台、运营与模板化体验
+
+## 五条落地主线（strategy lanes）
+
+外部系统对标后，OpenClaw 量化团队不再只区分“角色”，而是区分 5 条可执行主线：
+
+1. `directional_alpha`
+   - 代表系统：`Freqtrade / Jesse / LEAN`
+   - 典型策略：`trend_follow / mean_reversion / breakout / ml_filter`
+2. `basis_carry`
+   - 代表系统：`Hummingbot / NautilusTrader / LEAN`
+   - 典型策略：`funding_arbitrage / cash_and_carry / basis_neutral`
+3. `microstructure_mm`
+   - 代表系统：`Hummingbot / NautilusTrader`
+   - 典型策略：`inventory_skew / grid market making / maker-taker hedge`
+4. `signal_relay`
+   - 代表系统：`OctoBot / 3Commas / Hummingbot`
+   - 典型策略：`TradingView webhook / external alert router / AI advisory gate`
+5. `grid_dca`
+   - 代表系统：`OctoBot / 3Commas`
+   - 典型策略：`grid / DCA ladder / basket rebalance`
+
+后续所有 Task Card、decision、validation、ops review 都应该显式带 `strategy_lane`。
 
 ## OpenClaw 量化版目标架构
 

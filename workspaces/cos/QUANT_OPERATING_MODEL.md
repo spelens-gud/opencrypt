@@ -64,6 +64,35 @@
   - `incident_ref`
   - Builder closeout
 
+## 五条 Strategy Lane
+
+> 团队现在不是只按“角色”分工，还按“交易主线”分工。每个进入 mainline 的任务都必须声明 `strategy_lane`。
+
+### 1. `directional_alpha`
+- 来源参考：`Freqtrade / Jesse / LEAN`
+- 典型策略：`trend_follow / mean_reversion / breakout / ml_filtered_directional`
+- 验证顺序：`backtest -> replay -> paper -> controlled_live`
+
+### 2. `basis_carry`
+- 来源参考：`Hummingbot / NautilusTrader / LEAN`
+- 典型策略：`funding_arbitrage / cash_and_carry / basis_neutral`
+- 额外风险：`leg mismatch / borrow availability / hedge latency`
+
+### 3. `microstructure_mm`
+- 来源参考：`Hummingbot / NautilusTrader`
+- 典型策略：`inventory_skew / grid market making / LP rebalance`
+- 额外验证：`orderbook replay / quote staleness / orphan order reconcile`
+
+### 4. `signal_relay`
+- 来源参考：`OctoBot / 3Commas / Hummingbot`
+- 典型策略：`TradingView webhook / analyst signal / external alert router`
+- 额外验证：`idempotency / signal auth / reduce_only mapping`
+
+### 5. `grid_dca`
+- 来源参考：`OctoBot / 3Commas`
+- 典型策略：`grid bot / DCA ladder / basket rebalance`
+- 额外风险：`martingale creep / trapped inventory / capital sleeve drift`
+
 ## 标准工作流
 
 ### A. 新策略或新交易所接入
@@ -101,6 +130,19 @@
 | `rollout` | CoS | rollout owner、观察窗口 | `missing_rollout_owner` |
 | `observe` | CoS + Ops | 健康摘要、异常路由 | `risk_gate_failed` |
 | `knowledge` | KO | `knowledge_ref` | `missing_knowledge_ref` |
+
+## 统一任务协议补充
+
+量化任务卡和 closeout 现在都必须至少带：
+
+- `strategy_lane`
+- `decision_ref`
+- `rollback_ref`
+- `validation_plan_ref`
+- `validation_report_ref`
+- `review_ref`（涉及 live / risk / routing / credentials 时）
+
+没有 `strategy_lane` 的 mainline 任务，视为没有定义验证路径，不得进入 `build`。
 
 ## OpenClaw 里的路由规则
 

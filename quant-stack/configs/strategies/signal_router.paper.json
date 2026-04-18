@@ -1,0 +1,15 @@
+{
+  "strategy_name": "signal_router",
+  "family": "signal_relay",
+  "symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+  "regime_scope": ["R1", "R2", "R3", "R4"],
+  "timeframe": "external",
+  "entry_filter": "webhook_or_external_signal",
+  "exit_filter": "signal_cancel_or_reduce_only",
+  "signal_source": "tradingview_or_external_alerts",
+  "risk_notes": [
+    "deduplicate signals with idempotency keys",
+    "expire stale signals and reject unsigned payloads",
+    "map reduce_only and stop instructions before execution"
+  ]
+}

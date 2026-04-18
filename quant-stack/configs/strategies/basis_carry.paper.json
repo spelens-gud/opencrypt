@@ -1,0 +1,15 @@
+{
+  "strategy_name": "basis_carry",
+  "family": "basis_carry",
+  "symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+  "regime_scope": ["R1", "R2", "R3"],
+  "timeframe": "5m",
+  "entry_filter": "funding_basis_dislocation",
+  "exit_filter": "spread_convergence_or_risk_off",
+  "hedge_mode": "spot_perp_neutral",
+  "risk_notes": [
+    "check borrow or funding economics before entry",
+    "reject if hedge leg cannot be placed within latency budget",
+    "force risk-off on leg mismatch or margin stress"
+  ]
+}

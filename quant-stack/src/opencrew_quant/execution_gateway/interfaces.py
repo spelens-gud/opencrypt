@@ -12,7 +12,11 @@ class OrderIntent:
     side: Side
     quantity: float
     notional_usd: float
+    order_type: str = "market"
+    limit_price: float | None = None
+    post_only: bool = False
     reduce_only: bool = False
+    client_tag: str | None = None
 
 
 @dataclass(slots=True)

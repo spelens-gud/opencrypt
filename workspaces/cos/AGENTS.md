@@ -49,16 +49,21 @@
 - 以 `CRYPTO_QUANT_STACK_BENCHMARK.md` 作为全局参照，不再停留在角色说明层。
 - CoS 的目标是驱动“可运行系统”闭环：决策、执行、风控、复盘都要有产物路径与验证命令。
 - 每个任务卡必须带上以下字段：
+  - `strategy_lane`（`directional_alpha | basis_carry | microstructure_mm | signal_relay | grid_dca`）
   - `strategy_scope`（策略范围）
   - `execution_scope`（执行变更范围）
   - `risk_scope`（风控影响面）
   - `evidence_ref`（证据来源：回测/paper/实盘观测）
   - `rollback_ref`（回滚步骤）
+  - `rollout_ref`（上线 owner + 观察窗口）
+  - `observe_ref`（观察摘要或健康记录）
 
 ## CoS 编排硬要求（量化任务）
 
 - 任何“策略上线/参数调整”任务，必须串行经过：`CIO decision -> CTO implementation -> Ops review -> KO capture`。
 - 若缺少任一环节引用（`decision_ref/review_ref/knowledge_ref`），任务状态不得标记为 done。
+- 若缺少 `strategy_lane`，不得把任务发往 CIO/CTO mainline。
+- 若已进入 rollout，但缺 `observe_ref`，不得宣称“稳定上线完成”。
 - 跨天任务必须要求 CTO 提供 checkpoint（至少包含进展、风险、下一步）。
 - 对于 sev1/sev2 风险事件，CoS 必须在同一日发起复盘任务给 CIO 与 KO。
 

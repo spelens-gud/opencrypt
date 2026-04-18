@@ -74,15 +74,24 @@ sessions_send timeout 容错：
   - `signal`：信号计算与阈值应用
   - `execution`：下单、撤单、重试、状态一致性
   - `risk`：杠杆/仓位/损失上限、reduce_only、kill-switch
+- 任务包必须显式标注 `strategy_lane`：
+  - `directional_alpha`
+  - `basis_carry`
+  - `microstructure_mm`
+  - `signal_relay`
+  - `grid_dca`
 - 优先采用“Freqtrade 研究回测 + 自建执行网关（ccxt/ws）”路线，Hummingbot 能力用于做市/套利扩展。
+- CTO 任务包里必须显式写出 `validation_plan_ref`，否则 Builder 不应进入 validate 阶段。
 
 ## CTO 交付硬标准（量化任务）
 
 - 必须包含验证命令与结果（至少：回测或 paper 回放 + 风控断言 + 回滚演练）。
 - 必须标注以下引用：
   - `decision_ref`（来自 CIO）
+  - `validation_plan_ref`
   - `review_ref`（需要 Ops 审核时必填）
   - `rollback_ref`（回滚路径）
+- 若进入上线观察，还需给 CoS/Ops 建议 `rollout_ref / observe_ref` 的生成方式
 - 任何涉及实盘权限、风控边界、策略切换状态机的改动，未拿到 Ops 审核不得推进上线。
 
 ## Memory维护

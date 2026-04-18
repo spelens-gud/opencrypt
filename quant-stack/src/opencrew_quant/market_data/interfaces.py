@@ -11,6 +11,11 @@ class MarketDataSnapshot:
     reference_price: float
     funding_rate: float | None
     latency_ms: int
+    best_bid: float | None = None
+    best_ask: float | None = None
+    inventory_ratio: float = 0.0
+    orphan_order_count: int = 0
+    quote_age_ms: int | None = None
 
 
 class MarketDataSource(ABC):

@@ -77,6 +77,23 @@
 - OpenClaw 官方文档明确说明：只要任一 agent 配了 `heartbeat`，就只会对带 `heartbeat` 的 agent 运行心跳。
 - 因此量化团队里不要给 `builder / research` 默认开 heartbeat，否则容易产生无意义的主动轮询。
 
+## Strategy Lane 路由
+
+每条 mainline 任务都建议在 root message 或 Task Card 第一屏就写清 `strategy_lane`：
+
+| lane | 适合的系统参考 | 主验证重点 | 主审核重点 |
+|------|---------------|-----------|-----------|
+| `directional_alpha` | Freqtrade / Jesse / LEAN | backtest、replay、paper、lookahead | 风险预算、参数漂移、回撤 |
+| `basis_carry` | Hummingbot / NautilusTrader / LEAN | hedge parity、funding/basis replay | 腿间失配、借贷/保证金、risk-off |
+| `microstructure_mm` | Hummingbot / NautilusTrader | orderbook replay、quote lifecycle | orphan order、库存偏移、stale quote |
+| `signal_relay` | OctoBot / 3Commas / Hummingbot | signal replay、idempotency、reduce-only | webhook 安全、重复信号、误触发 |
+| `grid_dca` | OctoBot / 3Commas | ladder health、capital sleeve、paper | 资金上限、库存陷阱、bot 健康 |
+
+推荐 thread 标题格式：
+
+- `A2A CoS→CIO | <TITLE> | lane:<strategy_lane>`
+- `A2A CTO→Builder | <TITLE> | lane:<strategy_lane>`
+
 ## bindings 路由原则
 
 - 一个角色一个主频道，避免混杂上下文
@@ -110,6 +127,14 @@
 - 原因：量化场景里状态需要显式留痕，不要让自动 ping-pong 代替真实的 thread 记录
 - 若你的模型经常在 A2A 中自循环，可直接降到 `0`
 
+### `channels.slack.thread.requireExplicitMention`
+- 推荐显式设为 `true`
+- 原因：OpenClaw 官方文档已支持该项，用来避免 bot 进入 thread 后被“隐式提及”持续唤醒，量化场景尤其需要减少误触发
+
+### `agentDir`
+- 推荐每个 agent 显式配置独立 `agentDir`
+- 原因：OpenClaw 官方多智能体文档明确要求 workspace、agentDir、sessions 隔离，避免认证和会话碰撞
+
 ### `sessions.visibility`
 - 推荐 `all`
 - 原因：Ops / CoS / KO 需要跨团队追溯上下文
@@ -127,9 +152,9 @@
 ## 标准主线
 
 ### 策略上线
-1. `research` 输出 benchmark
-2. `cio` 输出 `decision_ref`
-3. `cto` 生成任务包
+1. `research` 输出 benchmark，并建议 `strategy_lane`
+2. `cio` 输出带 `strategy_lane` 的 `decision_ref`
+3. `cto` 生成带 lane 验证要求的任务包
 4. `builder` 提交验证结果
 5. `ops` 生成 `review_ref`
 6. `cos` 安排 rollout

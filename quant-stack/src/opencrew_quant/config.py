@@ -49,11 +49,18 @@ def _load_json(path: str | Path) -> dict[str, object]:
 
 def load_strategy_config(path: str | Path, venue: str) -> StrategyConfig:
     raw = _load_json(path)
+    parameters = {
+        key: value
+        for key, value in raw.items()
+        if key not in {"strategy_name", "family", "symbols", "regime_scope"}
+    }
     return StrategyConfig(
         name=str(raw["strategy_name"]),
         venue=venue,
         symbols=tuple(raw["symbols"]),
         regime_scope=tuple(raw["regime_scope"]),
+        family=str(raw.get("family") or raw["strategy_name"]),
+        parameters=parameters,
     )
 
 

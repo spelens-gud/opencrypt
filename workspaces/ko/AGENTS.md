@@ -48,3 +48,14 @@
 
 - 每周至少完成 1 次原则/模式升级审查
 - 对 signal=3 的风险事件，优先输出 scar 条目
+- rollout 结束后若出现观察窗经验，也优先沉淀为 `pattern`
+
+## 引用链要求（新增）
+
+- 若 closeout 涉及上线主线，优先把以下引用串起来：
+  - `strategy_lane`
+  - `decision_ref`
+  - `review_ref`
+  - `observe_ref`
+  - `knowledge_ref`
+- KO 的目标不是只收尾，而是让下一次类似策略/事故能直接复用

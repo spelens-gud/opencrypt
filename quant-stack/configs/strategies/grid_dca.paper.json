@@ -1,0 +1,15 @@
+{
+  "strategy_name": "grid_dca",
+  "family": "grid_dca",
+  "symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+  "regime_scope": ["R2", "R3"],
+  "timeframe": "15m",
+  "entry_filter": "range_or_accumulation_window",
+  "exit_filter": "ladder_completion_or_capital_limit",
+  "allocation_style": "laddered_entries",
+  "risk_notes": [
+    "cap capital sleeve per bot and per asset",
+    "monitor trapped inventory and ladder overlap",
+    "pause new entries when drawdown or holdings ratio breaches limits"
+  ]
+}

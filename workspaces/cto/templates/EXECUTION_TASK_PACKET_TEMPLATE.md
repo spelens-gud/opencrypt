@@ -4,6 +4,7 @@
 - ...
 
 ## 2. Decision Reference
+- `strategy_lane`:
 - `decision_ref`:
 - `regime`:
 - `strategy_mix`:
@@ -27,6 +28,13 @@
 - paper:
 - risk assertions:
 
+## 5.1 Lane-Specific Validation
+- `directional_alpha`: lookahead / baseline / parameter drift
+- `basis_carry`: hedge parity / funding-cost model / leg mismatch drills
+- `microstructure_mm`: orderbook replay / quote staleness / orphan order reconcile
+- `signal_relay`: signal replay / idempotency / auth-expiry / reduce-only mapping
+- `grid_dca`: capital sleeve limit / ladder overlap / trapped inventory review
+
 ## 6. Rollback
 - `rollback_ref`:
 - rollback trigger:
@@ -39,3 +47,4 @@
 - 不做真实交易
 - 不跳过风控断言
 - 不省略 `validation_report`
+- 不省略 `strategy_lane`

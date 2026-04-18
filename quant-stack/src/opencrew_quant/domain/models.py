@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import StrEnum
+from dataclasses import dataclass, field
+from enum import Enum
+
+try:
+    from enum import StrEnum
+except ImportError:  # pragma: no cover - Python < 3.11 compatibility for local validation.
+    class StrEnum(str, Enum):
+        pass
 
 
 class Environment(StrEnum):
@@ -22,6 +28,8 @@ class StrategyConfig:
     venue: str
     symbols: tuple[str, ...]
     regime_scope: tuple[str, ...]
+    family: str | None = None
+    parameters: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

@@ -2,6 +2,7 @@
 
 ## Meta
 - task_id:
+- strategy_lane:
 - decision_ref:
 - strategy_name:
 - environment: backtest | replay | paper
@@ -24,6 +25,13 @@
 - position_limit_ok:
 - daily_loss_cap_ok:
 - kill_switch_tested:
+
+## Lane Assertions
+- directional_alpha_assertions:
+- basis_carry_assertions:
+- microstructure_mm_assertions:
+- signal_relay_assertions:
+- grid_dca_assertions:
 
 ## Exceptions
 - abnormal_samples:

@@ -70,9 +70,11 @@ Notes:
 
 收到量化执行任务时，Builder 的交付物至少包含：
 
+- `strategy_lane`
 - `strategy_config`: 策略参数与阈值快照
 - `execution_config`: 交易所、交易对、下单参数、重试规则
 - `risk_config`: 杠杆上限、单笔风险、日损上限、kill-switch
+- `validation_plan_ref`: 计划验证什么、按什么顺序验证
 - `validation_report`: 回测/paper/回放结果与异常样本
 - 推荐使用模板：`templates/VALIDATION_REPORT_TEMPLATE.md`
 - 实施模块需尽量对应 `../cto/SYSTEM_BLUEPRINT.md` 的层次，不把 data/signal/execution/risk 混成单文件黑盒
@@ -81,6 +83,12 @@ Notes:
 - `Done`: 本轮修改点
 - `Run`: 本轮执行的验证命令
 - `Output`: 关键结果（成功/失败、指标、日志摘要）
+
+最终 closeout 必须显式回填：
+- `strategy_lane`
+- `validation_plan_ref`
+- `validation_report_ref`
+- 若涉及上线观察准备，补充建议的 `observe_ref`
 
 禁止行为（量化场景）：
 - 跳过风控断言直接提交“可运行”结果

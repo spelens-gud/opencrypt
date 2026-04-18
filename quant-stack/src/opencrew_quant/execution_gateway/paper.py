@@ -9,6 +9,7 @@ from .interfaces import ExecutionGateway, OrderAck, OrderIntent
 class PaperExecutionGateway(ExecutionGateway):
     order_counter: int = 0
     intents: list[OrderIntent] = field(default_factory=list)
+    cancelled_order_ids: list[str] = field(default_factory=list)
 
     def submit(self, intent: OrderIntent) -> OrderAck:
         self.order_counter += 1
@@ -17,4 +18,12 @@ class PaperExecutionGateway(ExecutionGateway):
             order_id=f"paper-{self.order_counter:04d}",
             accepted=True,
             reason="paper-accepted",
+        )
+
+    def cancel(self, order_id: str) -> OrderAck:
+        self.cancelled_order_ids.append(order_id)
+        return OrderAck(
+            order_id=order_id,
+            accepted=True,
+            reason="paper-cancelled",
         )

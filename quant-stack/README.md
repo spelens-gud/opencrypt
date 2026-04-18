@@ -106,8 +106,21 @@ quant-stack/
 ```bash
 cd quant-stack
 PYTHONPATH=src python3 -m opencrew_quant blueprint
+PYTHONPATH=src python3 -m opencrew_quant operating-model
+PYTHONPATH=src python3 -m opencrew_quant openclaw-spec
+PYTHONPATH=src python3 -m opencrew_quant strategy-catalog
 PYTHONPATH=src python3 -m opencrew_quant run-paper-cycle --decision-ref DEC-2026-04-17-001
+PYTHONPATH=src python3 -m opencrew_quant run-paper-cycle --decision-ref DEC-2026-04-18-BC-001 --strategy-file basis_carry.paper.json
+PYTHONPATH=src python3 -m opencrew_quant run-paper-cycle --decision-ref DEC-2026-04-18-MM-001 --strategy-file market_making.paper.json
+PYTHONPATH=src python3 -m opencrew_quant run-paper-replay --decision-ref DEC-2026-04-18-MM-REPLAY-001 --scenario inventory_refresh
+PYTHONPATH=src python3 -m opencrew_quant run-binance-quote-loop --decision-ref DEC-2026-04-19-MM-LOOP-001 --order-mode preview --iterations 2
 ```
+
+新增的三个入口不是“又一份文档”，而是给 OpenClaw 团队输出统一的可机读契约：
+
+- `operating-model`：输出热门量化系统 benchmark、strategy lanes、团队职责、阶段 gate、OpenClaw 适配约束
+- `openclaw-spec`：输出适合直接映射到 `agents.list / bindings / heartbeat / sessions_send` 设计的团队规格
+- `strategy-catalog`：输出方向策略、basis/carry、做市、signal relay、grid/DCA 等 lane 的可机读目录
 
 当前 `run-paper-cycle` 会串起：
 
@@ -118,7 +131,68 @@ PYTHONPATH=src python3 -m opencrew_quant run-paper-cycle --decision-ref DEC-2026
 - paper 下单
 - 审计事件输出
 
+当前 `run-paper-replay` 会专门覆盖 `microstructure_mm` 的 quote lifecycle：
+
+- seed quotes
+- inventory skew refresh
+- replace / keep / cancel
+- stale quote risk-off
+- replay 级审计事件输出
+
+当前已接通的最小策略闭环：
+
+- `trend_follow`
+- `mean_reversion`
+- `basis_carry`（以 signed target weight 形式输出对冲方向，可在 paper / binance preview 中产出 buy+sell intent）
+- `market_making`（以 post-only 双边 limit quote 形式输出 maker-bid / maker-ask，并带 inventory skew / stale quote / orphan order gate）
+
 它是最小主线，不接真实交易所。
+
+其中 `market_making` 现在已经拆成两层：
+
+- `run-paper-cycle`：单周期 quote 计划与风控审批
+- `run-paper-replay`：多周期 quote refresh / replace / cancel-risk-off 验证
+- `run-binance-cycle --strategy-file market_making.paper.json`：Binance preview/test 的 maker limit / post-only / open-order replace-cancel 骨架
+- `run-binance-quote-loop`：把做市 lane 挂到连续迭代里，验证跨周期 `keep / replace / cancel`
+
+## OpenClaw 团队契约
+
+这个目录现在不只提供“代码骨架”，还提供了和多 agent 编排直接对应的运行契约：
+
+- 工作流阶段：`research -> decision -> build -> validate -> ops_review -> rollout -> observe -> knowledge`
+- 交付阶段：`backtest -> replay -> paper -> ops_review -> live`
+- 强制引用链：
+  - `decision_ref`
+  - `validation_plan_ref`
+  - `validation_report_ref`
+  - `rollback_ref`
+  - `review_ref`
+  - `rollout_ref`
+  - `observe_ref`
+  - `knowledge_ref`
+
+这些字段会同时出现在：
+
+- workspace 协议
+- closeout / task card 模板
+- `opencrew_quant operating-model` 输出
+
+除此之外，量化主线现在还要求每个任务显式声明 `strategy_lane`，用于把任务绑定到正确的验证路径：
+
+- `directional_alpha`
+- `basis_carry`
+- `microstructure_mm`
+- `signal_relay`
+- `grid_dca`
+
+## 策略目录
+
+`configs/strategies/` 现在分两类：
+
+- 当前已串通最小执行主线的：`trend_follow.paper.json`、`mean_reversion.paper.json`、`basis_carry.paper.json`、`market_making.paper.json`
+- 作为多 agent 编排目标能力清单的：`signal_router.paper.json`、`grid_dca.paper.json`
+
+其中 `market_making.paper.json` 已经不只是 lane 占位，而是会驱动最小 quote engine 输出双边挂单计划；`signal_router` 和 `grid_dca` 目前仍主要作为 OpenClaw 团队可引用的配置契约。
 
 ## 币安 Futures 接入
 
@@ -131,6 +205,20 @@ cd quant-stack
 PYTHONPATH=src python3 -m opencrew_quant run-binance-cycle \
   --decision-ref DEC-2026-04-17-002 \
   --order-mode preview
+
+# 做市 lane：生成 post-only limit quotes，并在 preview/test 路径执行 replace/cancel 逻辑
+PYTHONPATH=src python3 -m opencrew_quant run-binance-cycle \
+  --decision-ref DEC-2026-04-18-MM-BINANCE-001 \
+  --strategy-file market_making.paper.json \
+  --order-mode preview
+
+# 做市 lane：连续跑 2 个 quote 周期，观察 keep / replace / cancel
+PYTHONPATH=src python3 -m opencrew_quant run-binance-quote-loop \
+  --decision-ref DEC-2026-04-19-MM-BINANCE-LOOP-001 \
+  --strategy-file market_making.paper.json \
+  --order-mode preview \
+  --iterations 2 \
+  --interval-s 1
 
 # 使用 CCXT demo trading 下单
 export BINANCE_DEMO_API_KEY=...
@@ -145,6 +233,15 @@ PYTHONPATH=src python3 -m opencrew_quant run-binance-cycle \
 - `preview`：只用币安公开行情，不发单
 - `test`：通过 `ccxt.binance.enable_demo_trading(True)` 走 Binance demo trading
 - `live`：通过 `ccxt.binance` 发真实订单
+
+对 `market_making` 来说，`preview/test` 当前已经不是简单 market order 预览，而是：
+
+- 生成 `limit + postOnly + newClientOrderId`
+- 读取当前 open orders
+- 按 quote plan 做 `keep / replace / cancel`
+- 在 stale quote 或 risk-off 条件下主动撤掉已有 quote
+
+`run-binance-quote-loop` 会把这套逻辑连续执行，并将结果写入 `state/audit/quote_loops.jsonl`。
 
 建议先只用 `preview` 和 `test`。
 

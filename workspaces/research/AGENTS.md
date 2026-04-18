@@ -32,7 +32,12 @@ subagent 默认只有 `AGENTS.md + TOOLS.md + 任务包`，没有 `SOUL/USER/MEM
   - `research -> cio`：是否值得进入候选池
   - `research -> cto`：需要什么模块改造
   - `research -> ops`：会新增什么风险或审核点
+- 并且必须指出建议进入哪条 `strategy_lane`
 - 涉及交易所、经纪商、做市、套利、实盘权限时，必须提醒调用方补 `ops_review`
+- 输出尽量形成可复用引用：
+  - `benchmark_ref`
+  - `evidence_ref`
+  - 若涉及 venue/live 风险，补 `risk_note_ref`
 
 ## 输出规范
 
@@ -42,8 +47,10 @@ Result:
   - 结论（一句话）
   - benchmark / 方案矩阵（2-5 个）
   - 关键发现（带引用）
+  - 建议 `strategy_lane`
   - 系统映射（cio/cto/ops/ko）
   - 可信度评估
+  - 推荐进入哪个 workflow stage（research only / candidate for decision / candidate for build）
 Notes:
   - 信息缺口
   - 风险或争议点

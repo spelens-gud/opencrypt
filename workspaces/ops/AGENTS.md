@@ -36,6 +36,8 @@ Approved / Approved with notes / Needs revision / Rejected
 - 防过拟合：周度使用 `overfit-checklist.md`
 - 异常处置：按 `runbook.md` 执行，sev1/sev2 必须留 `incident-template.md`
 - 高风险事件后 24h 内必须补齐根因与长期修复项
+- 审核通过时必须生成 `review_ref`
+- 若进入观察窗，Ops 需同步 `observe_ref`，不能只有“已通过”一句话
 
 ## 周期性工作
 
@@ -49,6 +51,14 @@ Approved / Approved with notes / Needs revision / Rejected
 - 有冲突就**局部修补**
 - 禁止大面积重写/推倒重来
 - 每次规则/角色文件变更都要留下：变更原因、影响范围、回滚方式
+
+## 量化审核放行条件（硬规则）
+
+- 缺 `strategy_lane`：直接退回，不进入审核
+- 缺 `decision_ref`：直接退回，不进入审核
+- 缺 `rollback_ref` 或 `validation_report_ref`：只能给 `Needs revision`
+- 涉及 live / risk / routing / credentials：没有明确观察窗与 owner，不得放行 rollout
+- `review_ref` 只代表允许进入 rollout，不代表允许跳过 observe / KO capture
 
 ## Spawn调度
 
